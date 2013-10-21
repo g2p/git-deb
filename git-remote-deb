@@ -1,0 +1,276 @@
+#!/usr/bin/python3.3
+"""
+deb:pkgname
+
+Sadly, git parses the above as ssh pseudo-urls.
+Workaround:
+deb::deb:pkgname deb::pkgname
+"""
+
+import apt_pkg # pypi:python-apt, apt:python3-apt
+import argparse
+import httplib2 # pypi:httplib2, apt:python3-httplib2
+import isodate # pypi:isodate, apt:python3-isodate
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import types
+import urllib.parse
+
+
+SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
+
+
+class Snapshots:
+    def __init__(self):
+        # s.d.o versions are cached for 600s
+        # s.d.o/file/sha1 is good for 10 days
+        cache_dir = os.path.expanduser('~/.cache/git-remote-deb')
+        self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
+
+        sbs = urllib.parse.urlsplit(SNAPSHOTS_BASE)
+        sbd = sbs._asdict()
+
+        # priority order than matches man:apt.conf
+        proxy_url = apt_pkg.config.get(
+            'Acquire::{scheme}::Proxy::{netloc}'.format(**sbd))
+        if not proxy_url:
+            proxy_url = apt_pkg.config.get(
+                'Acquire::{scheme}::Proxy'.format(**sbd))
+        if proxy_url == 'DIRECT':
+            proxy_info = None
+        elif proxy_url:
+            proxy_info = httplib2.proxy_info_from_url(proxy_url)
+        else:
+            envvar = sbs.scheme + '_proxy'
+            if envvar in os.environ:
+                proxy_url = os.environ[envvar]
+                proxy_info = httplib2.proxy_info_from_url(proxy_url)
+            else:
+                proxy_info = None
+
+        self.http = httplib2.Http(
+            cache=cache_dir, timeout=5., proxy_info=proxy_info,
+            disable_ssl_certificate_validation=False)
+
+    def _api_request(self, url):
+        resp, body = self.http.request(SNAPSHOTS_BASE + url)
+        assert resp.status == 200, (resp, body)
+        return json.loads(
+            body.decode(), object_hook=lambda args: types.SimpleNamespace(**args))
+
+    def _get_file(self, fhash, finfo):
+        # ignoring archive_name and path
+        name = finfo.name
+        size = finfo.size
+        path = self.debsnap_dir + name
+        try:
+            st = os.stat(path)
+        except FileNotFoundError:
+            pass
+        else:
+            # Check for partial downloads, anything else will
+            # be caught by dscverify
+            if st.st_size == size:
+                #print('skipping {}'.format(name), file=sys.stderr)
+                return path
+            os.unlink(path)
+        resp, body = self.http.request(SNAPSHOTS_BASE + 'file/' + fhash)
+        assert resp.status == 200, (resp, body)
+        ts = finfo.first_seen_ts
+        try:
+            fd, tn = tempfile.mkstemp(dir=self.debsnap_dir)
+            os.write(fd, body)
+            os.utime(fd, times=(ts, ts))
+            os.rename(tn, path)
+        except:
+            os.unlink(tn)
+            raise
+        finally:
+            os.close(fd)
+        return path
+
+    def get_versions(self):
+        # new to old, with version sort
+        # may not match dates in case of backports and mistakes
+        vinfo = self._api_request('mr/package/{}/'.format(pkgname_quoted))
+        return [el.version for el in vinfo.result]
+
+    def grab_srcfiles(self, ver):
+        srcinfo = self._api_request(
+            'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver))
+        # sha1
+        #hashes = [el.hash for el in srcinfo.result]
+        dsc_finfo = None
+        for fhash, finfos in vars(srcinfo.fileinfo).items():
+            assert finfos
+            if len(finfos) > 1:
+                # appears in multiple archives
+                assert len(set((fi.name, fi.size) for fi in finfos)) == 1, finfos
+            # lex sort is fine here
+            finfo = min(finfos, key=lambda fi: fi.first_seen)
+            finfo.first_seen_dt = isodate.parse_datetime(finfo.first_seen)
+            finfo.first_seen_ts = finfo.first_seen_dt.timestamp()
+            # this api only accepts sha1, though dscs keep other hashes
+            path = self._get_file(fhash, finfo)
+            if finfo.name.endswith('.dsc'):
+                assert dsc_finfo is None
+                dsc_finfo = finfo
+                dsc_path = path
+        assert dsc_finfo
+        # Slow
+        subprocess.check_call(['dscverify', dsc_path], stdout=subprocess.DEVNULL)
+        return dsc_finfo, dsc_path
+
+
+def cmd_capabilities(args):
+    print('*import')
+    print('*option')
+    print('*refspec refs/heads/*:refs/debian/{}/*'.format(remote_quoted))
+    print()
+
+depth = None
+def cmd_option(args):
+    global depth
+    if args.name == 'depth':
+        depth = int(args.value)
+        if depth <= 0:
+            # transport.c doesn't really check,
+            # depth=0 might mean infinity in git internals
+            print('error depth must be > 0')
+            sys.exit(1)  # somehow git ignores errors if we don't exit
+        else:
+            print('ok')
+    else:
+        print('unsupported')
+
+def cmd_list(args):
+    # TODO check for unchanged
+    remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
+    print('? ' + remote_ref)
+    print('@{} HEAD'.format(remote_ref))
+    print()
+
+def cmd_import(args):
+    remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
+    assert args.refname in {remote_ref, 'HEAD'}, (args.refname, remote_ref)
+    if remote_ref in done_refs:
+        return
+    import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
+    versions = snaps.get_versions()
+    print(versions, file=sys.stderr)
+    if depth:
+        versions = versions[:depth]
+    versions = reversed(versions)
+    prev_seen = ''
+    with tempfile.TemporaryDirectory() as tdir:
+        for ver in versions:
+            dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+            if dsc_finfo.first_seen < prev_seen:
+                print('Version swap {} {} {} {}'.format(
+                    prev_seen, prev_ver, dsc_finfo.first_seen, ver),
+                    file=sys.stderr)
+            xdir = tdir + '/' + ver
+            subprocess.call(
+                'dpkg-source -x --'.split() + [dsc_path, xdir],
+                stdout=subprocess.DEVNULL)
+            os.environ['GIT_WORK_TREE'] = xdir
+            os.environ['GIT_INDEX_FILE'] = xdir + '.index'
+            subprocess.check_call('git add -A'.split())
+            tree_hash = subprocess.check_output('git write-tree'.split()).decode().rstrip()
+            # TODO extract who made the GPG signature and when,
+            # same for the last changelog
+            print('commit ' + import_ref)
+            print(
+                'committer <git-remote-deb> {} +0000'
+                .format(int(dsc_finfo.first_seen_ts)))
+            msg = 'Import ' + ver
+            print('data {}'.format(len(msg.encode())))
+            print(msg)
+            print('deleteall')
+            print('M 040000 {} '.format(tree_hash))
+            print()
+            prev_seen = dsc_finfo.first_seen
+            prev_ver = ver
+    done_refs.add(remote_ref)
+
+apt_pkg.init_config()
+snaps = Snapshots()
+
+parser0 = argparse.ArgumentParser()
+parser0.add_argument('remote')
+parser0.add_argument('url')
+args0 = parser0.parse_args()
+remote_quoted = urllib.parse.quote(args0.remote, safe='')
+url = urllib.parse.urlsplit(args0.url, scheme='deb')
+assert url.scheme == 'deb'
+assert not url.netloc
+assert not url.fragment
+
+if True:
+    # use snapshot.debian.org
+    assert not url.query
+    distribution = 'debian'
+else:
+    # use launchpad
+    # the launchpad dataset is usable enough once you know the right api,
+    # but already exposed as bzr branches
+    # not sure how these deal with the orig/debian/patches distinction
+    # it's less granular for debian, probably because sync is done by cronjob
+    if url.query:
+        urlparams = urllib.parse.parse_qs(
+            url.query, strict_parsing=True, errors='strict')
+        assert urlparams.keys() in {'distribution', 'archive'}, urlparams
+    else:
+        urlparams = {}
+
+    distribution = urlparams.get('distribution', 'ubuntu')
+    archive = urlparams.get('archive', 'primary')
+    assert distribution in {'debian', 'ubuntu'}, distribution
+    assert archive in {'primary', 'partner'}, archive
+
+pkgname = urllib.parse.unquote(url.path, errors='strict')
+pkgname_quoted = urllib.parse.quote(pkgname, safe='')
+
+assert pkgname == pkgname_quoted, (pkgname, pkgname_quoted)
+
+parser1 = argparse.ArgumentParser()
+commands = parser1.add_subparsers(dest='command', metavar='command')
+sp_capabilities = commands.add_parser('capabilities')
+sp_capabilities.set_defaults(action=cmd_capabilities)
+sp_option = commands.add_parser('option')
+sp_option.set_defaults(action=cmd_option)
+sp_option.add_argument('name')
+sp_option.add_argument('value')
+sp_list = commands.add_parser('list')
+sp_list.set_defaults(action=cmd_list)
+sp_import = commands.add_parser('import')
+sp_import.set_defaults(action=cmd_import)
+sp_import.add_argument('refname')
+
+import_batch = False
+done_refs = set()
+
+for line in sys.stdin:
+    assert line[-1] == '\n'
+    line1 = line[:-1]
+    if not line1:
+        if import_batch:
+            import_batch = False
+            print('done', flush=True)
+            continue
+        else:
+            break
+    print(line1, file=sys.stderr)
+    args = parser1.parse_args(line1.split())
+    if args.command == 'import':
+        if not import_batch:
+            print('feature done')
+            import_batch = True
+    else:
+        assert not import_batch
+    args.action(args)
+    sys.stdout.flush()
+
