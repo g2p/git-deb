@@ -9,10 +9,12 @@ deb::deb:pkgname deb::pkgname
 
 import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
+import email.utils
 import httplib2 # pypi:httplib2, apt:python3-httplib2
 import isodate # pypi:isodate, apt:python3-isodate
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,9 @@ import urllib.parse
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
 
+# very relaxed, we'll be dealing with historical data
+VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
+AUTHOR_LINE_RE = re.compile(r'^ --\s*([^<>]*<[^<>]+>)  (.*)$')
 
 class Snapshots:
     def __init__(self):
@@ -153,6 +158,38 @@ def cmd_list(args):
     print('@{} HEAD'.format(remote_ref))
     print()
 
+def parse_changelog(cl, skip_versions):
+    top_entry = True
+    within = False
+    versions = []
+    for line in cl:
+        line = line.rstrip()
+        if not line:
+            continue
+        if not within:
+            match = VERSION_LINE_RE.match(line)
+            if not match:
+                print('Giving up on changelog {!r}'.format(line), file=sys.stderr)
+                break
+            ver1, = match.groups()
+            versions.append(ver1)
+            if not top_entry and ver1 in skip_versions:
+                break
+            within = True
+        else:
+            match = AUTHOR_LINE_RE.match(line)
+            if not match:
+                continue
+            if top_entry:
+                author, date = match.groups()
+                date = email.utils.parsedate_to_datetime(date)
+            top_entry = False
+            within = False
+    if top_entry:
+        # There was no valid changelog stanza
+        return None, None
+    return (author, date), versions
+
 def cmd_import(args):
     remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
     assert args.refname in {remote_ref, 'HEAD'}, (args.refname, remote_ref)
@@ -161,39 +198,61 @@ def cmd_import(args):
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
     print(versions, file=sys.stderr)
+    version_set = set(versions)
     if depth:
         versions = versions[:depth]
-    versions = reversed(versions)
-    prev_seen = ''
+    authorships = {}
+    first_seen = {}
+    predecessors = {}
+    skip_versions = set()
+    is_root = True
     with tempfile.TemporaryDirectory() as tdir:
-        for ver in versions:
+        for ver in reversed(versions):
             dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
-            if dsc_finfo.first_seen < prev_seen:
-                print('Version swap {} {} {} {}'.format(
-                    prev_seen, prev_ver, dsc_finfo.first_seen, ver),
-                    file=sys.stderr)
+            first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
             subprocess.call(
                 'dpkg-source -x --'.split() + [dsc_path, xdir],
                 stdout=subprocess.DEVNULL)
+            with open(xdir + '/debian/changelog') as cl:
+                authorship, cl_vers = parse_changelog(cl, skip_versions)
+            if not authorship:
+                continue
+            assert cl_vers[0] == ver, (cl_vers[0], ver)
+            skip_versions.update(cl_vers)
+            for ver1 in cl_vers[1:]:
+                if ver1 in version_set:
+                    predecessors[ver] = ver1
+                    break
+                else:
+                    print('Found ghost version {}'.format(ver1), file=sys.stderr)
+            else:
+                if not is_root:
+                    print('Version {} has no predecessor'.format(ver), file=sys.stderr)
+            authorships[ver] = authorship
+            is_root = False
+        for ver in reversed(versions):
+            dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+            xdir = tdir + '/' + ver
             os.environ['GIT_WORK_TREE'] = xdir
             os.environ['GIT_INDEX_FILE'] = xdir + '.index'
             subprocess.check_call('git add -A'.split())
             tree_hash = subprocess.check_output('git write-tree'.split()).decode().rstrip()
-            # TODO extract who made the GPG signature and when,
-            # same for the last changelog
+            # TODO extract who made the GPG signature and when
             print('commit ' + import_ref)
-            print(
-                'committer <git-remote-deb> {} +0000'
-                .format(int(dsc_finfo.first_seen_ts)))
+            if ver in authorships:
+                author, date = authorships[ver]
+                print('committer {} {} +0000'.format(author, int(date.timestamp())))
+            else:
+                print(
+                    'committer <malformed-changelog> {} +0000'
+                    .format(int(dsc_finfo.first_seen_ts)))
             msg = 'Import ' + ver
             print('data {}'.format(len(msg.encode())))
             print(msg)
             print('deleteall')
             print('M 040000 {} '.format(tree_hash))
             print()
-            prev_seen = dsc_finfo.first_seen
-            prev_ver = ver
     done_refs.add(remote_ref)
 
 apt_pkg.init_config()
