@@ -248,10 +248,13 @@ def cmd_import(args):
                     print('Version {} has no predecessor'.format(ver), file=sys.stderr)
             authorships[ver] = authorship
             is_root = False
-        # XXX Check for changelog loops
         assert todo
+        done = set()
         while todo:
             ver = todo.pop()
+            if ver in done:
+                bail('Changelog loop detected at {} {}, giving up'
+                     .format(ver, predecessors[ver]))
             todo.update(successors[ver])
             dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
             xdir = tdir + '/' + ver
@@ -279,6 +282,7 @@ def cmd_import(args):
             print()
             print('reset ' + tagname(ver))
             print('from :1')
+            done.add(ver)
     done_refs.add(remote_ref)
 
 apt_pkg.init_config()
