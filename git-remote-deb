@@ -9,9 +9,11 @@ deb::deb:pkgname deb::pkgname
 
 import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
+import chardet # pypi:chardet
 import collections
 import email.utils
 import httplib2 # pypi:httplib2, apt:python3-httplib2
+import io
 import isodate # pypi:isodate, apt:python3-isodate
 import json
 import os
@@ -198,6 +200,17 @@ def parse_changelog(cl, skip_versions):
         return None, None
     return (author, date), versions
 
+def open_chardet(fname):
+    fi = open(fname, 'rb')
+    guess = chardet.detect(fi.read(65536))
+    fi.seek(0)
+    if guess['confidence'] < .5 or guess['encoding'] == 'ascii':
+        # Debian standard
+        encoding = 'utf8'
+    else:
+        encoding = guess['encoding']
+    return io.TextIOWrapper(fi, encoding)
+
 def tagname(ver):
     # escape : and ~. Other problem characters aren't valid for debian
     #return 'refs/tags/' + urllib.parse.quote(ver, safe='+')
@@ -229,7 +242,7 @@ def cmd_import(args):
             subprocess.call(
                 'dpkg-source -x --'.split() + [dsc_path, xdir],
                 stdout=subprocess.DEVNULL)
-            with open(xdir + '/debian/changelog') as cl:
+            with open_chardet(xdir + '/debian/changelog') as cl:
                 authorship, cl_vers = parse_changelog(cl, skip_versions)
             if not authorship:
                 continue
