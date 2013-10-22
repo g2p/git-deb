@@ -12,12 +12,12 @@ import argparse
 import chardet # pypi:chardet
 import collections
 import email.utils
-import httplib2 # pypi:httplib2, apt:python3-httplib2
 import io
 import isodate # pypi:isodate, apt:python3-isodate
 import json
 import os
 import re
+import requests # pypi
 import subprocess
 import sys
 import tempfile
@@ -31,43 +31,71 @@ SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
 AUTHOR_LINE_RE = re.compile(r'^ --\s*([^<>]*<[^<>]+>)  (.*)$')
 
+
+def apt_proxy_for(hostname):
+    sbs = urllib.parse.urlsplit(hostname)
+    sbd = sbs._asdict()
+
+    # priority order than matches man:apt.conf
+    proxy_url = apt_pkg.config.get(
+        'Acquire::{scheme}::Proxy::{netloc}'.format(**sbd))
+    if not proxy_url:
+        proxy_url = apt_pkg.config.get(
+            'Acquire::{scheme}::Proxy'.format(**sbd))
+    if proxy_url == 'DIRECT':
+        proxy_url = None
+    elif not proxy_url:
+        envvar = sbs.scheme + '_proxy'
+        proxy_url = os.environ.get(envvar)
+    # May set the key to None, to hopefully prevent requests
+    # from parsing the environment
+    return {sbs.scheme: proxy_url}
+
+
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
         # s.d.o/file/sha1 is good for 10 days
-        cache_dir = os.path.expanduser('~/.cache/git-remote-deb')
+        cache_dir = os.path.expanduser('~/.cache/git-remote-deb/')
         self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
 
-        sbs = urllib.parse.urlsplit(SNAPSHOTS_BASE)
-        sbd = sbs._asdict()
+        self.http = sess = requests.Session()
+        # May not work out of the box
+        #sess.proxies = apt_proxy_for(SNAPSHOTS_BASE)
+        #sess.proxies = dict(http='http://localhost:8123')  # Polipo
+        sess.timeout = 15.
+        sess.trust_env = False
 
-        # priority order than matches man:apt.conf
-        proxy_url = apt_pkg.config.get(
-            'Acquire::{scheme}::Proxy::{netloc}'.format(**sbd))
-        if not proxy_url:
-            proxy_url = apt_pkg.config.get(
-                'Acquire::{scheme}::Proxy'.format(**sbd))
-        if proxy_url == 'DIRECT':
-            proxy_info = None
-        elif proxy_url:
-            proxy_info = httplib2.proxy_info_from_url(proxy_url)
+        try:
+            raise ImportError  # not ready for prime time
+
+            import cachecontrol # pypi:CacheControl
+            class DiskCache(cachecontrol.cache.BaseCache):
+                def __path_of_key(self, key):
+                    return cache_dir + urllib.parse.quote(key, safe='')
+                def get(self, key):
+                    try:
+                        return open(self.__path_of_key(key), 'rb').read()
+                    except FileNotFoundError:
+                        pass
+                def set(self, key, value):
+                    print('cache {} {}'.format(key, value), file=sys.stderr)
+                    open(self.__path_of_key(key), 'wb').write(value)
+                def delete(self, key):
+                    os.unlink(self.__path_of_key(key))
+            caching = cachecontrol.CacheControlAdapter(cache=DiskCache())
+        except ImportError:
+            pass
         else:
-            envvar = sbs.scheme + '_proxy'
-            if envvar in os.environ:
-                proxy_url = os.environ[envvar]
-                proxy_info = httplib2.proxy_info_from_url(proxy_url)
-            else:
-                proxy_info = None
+            print('Setting up caching', file=sys.stderr)
+            sess.mount('http://', caching)
+            sess.mount('https://', caching)
 
-        self.http = httplib2.Http(
-            cache=cache_dir, timeout=15., proxy_info=proxy_info,
-            disable_ssl_certificate_validation=False)
-
-    def _api_request(self, url):
-        resp, body = self.http.request(SNAPSHOTS_BASE + url)
-        assert resp.status == 200, (resp, body)
-        return json.loads(
-            body.decode(), object_hook=lambda args: types.SimpleNamespace(**args))
+    def _api_request(self, url, **kwargs):
+        resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
+        resp.raise_for_status()
+        return resp.json(
+            object_hook=lambda args: types.SimpleNamespace(**args))
 
     def _get_file(self, fhash, finfo):
         # ignoring archive_name and path
@@ -85,12 +113,12 @@ class Snapshots:
                 #print('skipping {}'.format(name), file=sys.stderr)
                 return path
             os.unlink(path)
-        resp, body = self.http.request(SNAPSHOTS_BASE + 'file/' + fhash)
-        assert resp.status == 200, (resp, body)
+        resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash)
+        resp.raise_for_status()
         ts = finfo.first_seen_ts
         try:
             fd, tn = tempfile.mkstemp(dir=self.debsnap_dir)
-            os.write(fd, body)
+            os.write(fd, resp.content)
             os.utime(fd, times=(ts, ts))
             os.rename(tn, path)
         except:
@@ -107,8 +135,10 @@ class Snapshots:
         return [el.version for el in vinfo.result]
 
     def grab_srcfiles(self, ver):
+        # Polipo doesn't understand no-args max-stale, so set it to 100 days
         srcinfo = self._api_request(
-            'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver))
+            'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
+            headers={'max-stale': '8640000'})
         # sha1
         #hashes = [el.hash for el in srcinfo.result]
         dsc_finfo = None
