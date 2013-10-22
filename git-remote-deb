@@ -137,6 +137,10 @@ def cmd_capabilities(args):
     print('*refspec refs/heads/*:refs/debian/{}/*'.format(remote_quoted))
     print()
 
+def bail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
 depth = None
 def cmd_option(args):
     global depth
@@ -145,8 +149,11 @@ def cmd_option(args):
         if depth <= 0:
             # transport.c doesn't really check,
             # depth=0 might mean infinity in git internals
-            print('error depth must be > 0')
-            sys.exit(1)  # somehow git ignores errors if we don't exit
+            msg = 'Depth must be > 0'
+            print('error ' + msg)
+            # Even though the protocol has error reporting,
+            # git ignores errors if we don't exit
+            bail(msg)
         else:
             print('ok')
     else:
