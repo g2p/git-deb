@@ -60,7 +60,7 @@ class Snapshots:
                 proxy_info = None
 
         self.http = httplib2.Http(
-            cache=cache_dir, timeout=5., proxy_info=proxy_info,
+            cache=cache_dir, timeout=15., proxy_info=proxy_info,
             disable_ssl_certificate_validation=False)
 
     def _api_request(self, url):
