@@ -9,6 +9,7 @@ deb::deb:pkgname deb::pkgname
 
 import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
+import collections
 import email.utils
 import httplib2 # pypi:httplib2, apt:python3-httplib2
 import isodate # pypi:isodate, apt:python3-isodate
@@ -190,6 +191,11 @@ def parse_changelog(cl, skip_versions):
         return None, None
     return (author, date), versions
 
+def tagname(ver):
+    # escape : and ~. Other problem characters aren't valid for debian
+    #return 'refs/tags/' + urllib.parse.quote(ver, safe='+')
+    return 'refs/tags/' + ver.replace(':', '%').replace('~', '_')
+
 def cmd_import(args):
     remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
     assert args.refname in {remote_ref, 'HEAD'}, (args.refname, remote_ref)
@@ -204,8 +210,10 @@ def cmd_import(args):
     authorships = {}
     first_seen = {}
     predecessors = {}
+    successors = collections.defaultdict(list)
     skip_versions = set()
     is_root = True
+    todo = set()
     with tempfile.TemporaryDirectory() as tdir:
         for ver in reversed(versions):
             dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
@@ -219,19 +227,25 @@ def cmd_import(args):
             if not authorship:
                 continue
             assert cl_vers[0] == ver, (cl_vers[0], ver)
-            skip_versions.update(cl_vers)
+            skip_versions.add(ver)
             for ver1 in cl_vers[1:]:
                 if ver1 in version_set:
                     predecessors[ver] = ver1
+                    successors[ver1].append(ver)
                     break
                 else:
                     print('Found ghost version {}'.format(ver1), file=sys.stderr)
             else:
+                todo.add(ver)
                 if not is_root:
                     print('Version {} has no predecessor'.format(ver), file=sys.stderr)
             authorships[ver] = authorship
             is_root = False
-        for ver in reversed(versions):
+        # XXX Check for changelog loops
+        assert todo
+        while todo:
+            ver = todo.pop()
+            todo.update(successors[ver])
             dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
             xdir = tdir + '/' + ver
             os.environ['GIT_WORK_TREE'] = xdir
@@ -240,6 +254,7 @@ def cmd_import(args):
             tree_hash = subprocess.check_output('git write-tree'.split()).decode().rstrip()
             # TODO extract who made the GPG signature and when
             print('commit ' + import_ref)
+            print('mark :1')
             if ver in authorships:
                 author, date = authorships[ver]
                 print('committer {} {} +0000'.format(author, int(date.timestamp())))
@@ -250,9 +265,13 @@ def cmd_import(args):
             msg = 'Import ' + ver
             print('data {}'.format(len(msg.encode())))
             print(msg)
+            if ver in predecessors:
+                print('from ' + tagname(predecessors[ver]))
             print('deleteall')
             print('M 040000 {} '.format(tree_hash))
             print()
+            print('reset ' + tagname(ver))
+            print('from :1')
     done_refs.add(remote_ref)
 
 apt_pkg.init_config()
