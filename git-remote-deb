@@ -123,6 +123,10 @@ class MissingSource(Exception):
     pass
 
 
+def upload_precedence(fi):
+    return fi.first_seen, fi.name, fi.archive_name, fi.path
+
+
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
@@ -153,7 +157,8 @@ class Snapshots:
             cf.close()
         resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
         if resp.status_code >= 400:
-            print('Request error on {}'.format(url), file=sys.stderr)
+            print('HTTP error {} on {}'.format(resp.status_code, url),
+                  file=sys.stderr)
             resp.raise_for_status()
         with open(cache_control.path, 'w') as cf:
             cf.write(resp.text)
@@ -213,49 +218,55 @@ class Snapshots:
                 cache_control=CacheForever(
                     self.cache_dir + pkgname_quoted
                     + '_' + ver + '.srcfiles.json'))
-        except requests.HTTPError:
-            raise MissingSource(ver)
+        except requests.HTTPError as err:
+            if err.response.status_code == 404:
+                raise MissingSource(ver)
+            raise
 
         # sha1
         #hashes = [el.hash for el in srcinfo.result]
-        dsc_finfo = None
+        dsc_finfos = set()
         for fhash, finfos in vars(srcinfo.fileinfo).items():
             assert finfos
             if len(finfos) > 1:
                 # some appear in multiple archives
                 assert len(set((fi.size) for fi in finfos)) == 1, finfos
             # lex sort is fine here
-            finfo = min(finfos, key=lambda fi: (
-                fi.first_seen, fi.name, fi.archive_name, fi.path))
+            finfo = min(finfos, key=upload_precedence)
             first_seen_dt = isodate.parse_datetime(finfo.first_seen)
             finfo.first_seen_ts = first_seen_dt.timestamp()
             # Some orig.tar.gz have multiple names :(
             extra_names = set(fi.name for fi in finfos if fi.name != finfo.name)
             # this api only accepts sha1, though dscs keep other hashes
-            path = self._get_file(fhash, finfo, extra_names)
+            local_path = self._get_file(fhash, finfo, extra_names)
             if finfo.name.endswith('.dsc'):
-                # Curl again. Horrors.
-                assert dsc_finfo is None, json_dump(srcinfo.fileinfo)
-                dsc_finfo = finfo
-                dsc_path = path
-        assert dsc_finfo
-        # Slow
-        subprocess.check_call(
-            ['dscverify', '--no-sig-check', dsc_path],
-            stdout=subprocess.DEVNULL)
-        for kr_name, kr_path in KEYRINGS.items():
-            gi = debian.deb822.GpgInfo.from_file(dsc_path, keyrings=[kr_path])
-            if not gi.valid():
-                continue
-            dsc_finfo.gi = gi
-            dsc_finfo.kr_name = kr_name
-            break
-        else:
-            # For example, on wget_1.5.3-3.1.dsc
-            # ERRSIG 7D7C0636C76F38D2 20 2 01 1039606003 4
-            # indicating problems with an ElGamal signature
-            bail('No valid signature on {} {}'.format(dsc_path, gi))
-        return dsc_finfo, dsc_path
+                finfo.local_path = local_path
+                # Curl has multiple dscs for the same upload.  Horrors.
+                dsc_finfos.add(finfo)
+        assert dsc_finfos
+        if len(dsc_finfos) > 1:
+            print('Multiple dscs for version {} {}'.format(
+                ver, [fi.local_path for fi in dsc_finfos]), file=sys.stderr)
+        for finfo in dsc_finfos:
+            dsc_path = finfo.local_path
+            # Slow
+            subprocess.check_call(
+                ['dscverify', '--no-sig-check', dsc_path],
+                stdout=subprocess.DEVNULL)
+            for kr_name, kr_path in KEYRINGS.items():
+                gi = debian.deb822.GpgInfo.from_file(
+                    dsc_path, keyrings=[kr_path])
+                if not gi.valid():
+                    continue
+                finfo.gi = gi
+                finfo.kr_name = kr_name
+                break
+            else:
+                # For example, on wget_1.5.3-3.1.dsc
+                # ERRSIG 7D7C0636C76F38D2 20 2 01 1039606003 4
+                # indicating problems with an ElGamal signature
+                bail('No valid signature on {} {}'.format(dsc_path, gi))
+        return min(dsc_finfos, key=upload_precedence)
 
 
 def cmd_capabilities(args):
@@ -369,7 +380,7 @@ def cmd_import(args):
     with tempfile.TemporaryDirectory() as tdir:
         for ver in reversed(versions):
             try:
-                dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+                dsc_finfo = snaps.grab_srcfiles(ver)
             except MissingSource:
                 # http://snapshot.debian.org/package/curl/6.0-1.1.1/
                 print(
@@ -380,7 +391,8 @@ def cmd_import(args):
             first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
             subprocess.call(
-                'dpkg-source -x --no-check --'.split() + [dsc_path, xdir],
+                'dpkg-source -x --no-check --'.split()
+                + [dsc_finfo.local_path, xdir],
                 stdout=subprocess.DEVNULL)
             with open_chardet(xdir + '/debian/changelog') as cl:
                 authorship, cl_vers = parse_changelog(cl, skip_versions)
@@ -394,11 +406,13 @@ def cmd_import(args):
                     successors[ver1].append(ver)
                     break
                 else:
-                    print('Found ghost version {}'.format(ver1), file=sys.stderr)
+                    print('Found ghost version {}'.format(ver1),
+                              file=sys.stderr)
             else:
                 todo.add(ver)
                 if not is_root:
-                    print('Version {} has no predecessor'.format(ver), file=sys.stderr)
+                    print('Version {} has no predecessor'.format(ver),
+                          file=sys.stderr)
             authorships[ver] = authorship
             is_root = False
         assert todo
@@ -409,7 +423,7 @@ def cmd_import(args):
                 bail('Changelog loop detected at {} {}, giving up'
                      .format(ver, predecessors[ver]))
             todo.update(successors[ver])
-            dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+            dsc_finfo = snaps.grab_srcfiles(ver)
             xdir = tdir + '/' + ver
             os.environ['GIT_WORK_TREE'] = xdir
             os.environ['GIT_INDEX_FILE'] = xdir + '.index'
@@ -418,7 +432,7 @@ def cmd_import(args):
                 'git write-tree'.split()).decode().rstrip()
 
             # See /usr/share/doc/gnupg/DETAILS.gz
-            for sigtype in 'GOODSIG REVKEYSIG'.split():
+            for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
                 try:
                     kid, uid, *extra = dsc_finfo.gi[sigtype]
                     break
