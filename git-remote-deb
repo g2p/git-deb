@@ -11,9 +11,10 @@ import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
 import chardet # pypi:chardet
 import collections
+import debian.deb822 # pypi:python-apt
 import email.utils
 import io
-import isodate # pypi:isodate, apt:python3-isodate
+import isodate # pypi:isodate
 import json
 import os
 import re
@@ -26,8 +27,12 @@ import urllib.parse
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
-EMERITUS_KEYRING = os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')
-REMOVED_KEYS = os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')
+KEYRINGS = collections.OrderedDict([
+    ('debian-keyring', '/usr/share/keyrings/debian-keyring.gpg'),
+    ('debian-maintainers', '/usr/share/keyrings/debian-maintainers.gpg'),
+    ('emeritus-keyring', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')),
+    ('removed-keys', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')),
+])
 
 # very relaxed, we'll be dealing with historical data
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
@@ -161,15 +166,18 @@ class Snapshots:
                 dsc_path = path
         assert dsc_finfo
         # Slow
-        try:
-            subprocess.check_call(['dscverify', dsc_path], stdout=subprocess.DEVNULL)
-        except subprocess.CalledProcessError:
-            try:
-                subprocess.check_call(['gpgv', '--keyring', EMERITUS_KEYRING, '--', dsc_path])
-                print('Found in the emeritus keyring', file=sys.stderr)
-            except subprocess.CalledProcessError:
-                subprocess.check_call(['gpgv', '--keyring', REMOVED_KEYS, '--', dsc_path])
-                print('Found in removed keys', file=sys.stderr)
+        subprocess.check_call(
+            ['dscverify', '--no-sig-check', dsc_path],
+            stdout=subprocess.DEVNULL)
+        for kr_name, kr_path in KEYRINGS.items():
+            gi = debian.deb822.GpgInfo.from_file(dsc_path, keyrings=[kr_path])
+            if not gi.valid():
+                continue
+            dsc_finfo.gi = gi
+            dsc_finfo.kr_name = kr_name
+            break
+        else:
+            bail('No valid signature found {}'.format(gi))
         return dsc_finfo, dsc_path
 
 
@@ -256,6 +264,12 @@ def tagname(ver):
     #return 'refs/tags/' + urllib.parse.quote(ver, safe='+')
     return 'refs/tags/' + ver.replace(':', '%').replace('~', '_')
 
+def gpg_ts(ts):
+    if 'T' in ts:
+        return isodate.parse_datetime(ts).timestamp()
+    else:
+        return int(ts)
+
 def cmd_import(args):
     remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
     assert args.refname in {remote_ref, 'HEAD'}, (args.refname, remote_ref)
@@ -263,7 +277,7 @@ def cmd_import(args):
         return
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
-    print(versions, file=sys.stderr)
+    #print(versions, file=sys.stderr)
     version_set = set(versions)
     if depth:
         versions = versions[:depth]
@@ -280,7 +294,7 @@ def cmd_import(args):
             first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
             subprocess.call(
-                'dpkg-source -x --'.split() + [dsc_path, xdir],
+                'dpkg-source -x --no-check --'.split() + [dsc_path, xdir],
                 stdout=subprocess.DEVNULL)
             with open_chardet(xdir + '/debian/changelog') as cl:
                 authorship, cl_vers = parse_changelog(cl, skip_versions)
@@ -314,18 +328,27 @@ def cmd_import(args):
             os.environ['GIT_WORK_TREE'] = xdir
             os.environ['GIT_INDEX_FILE'] = xdir + '.index'
             subprocess.check_call('git add -A'.split())
-            tree_hash = subprocess.check_output('git write-tree'.split()).decode().rstrip()
-            # TODO extract who made the GPG signature and when
+            tree_hash = subprocess.check_output(
+                'git write-tree'.split()).decode().rstrip()
+            # See /usr/share/doc/gnupg/DETAILS.gz
+            kid, uid, *extra = dsc_finfo.gi['GOODSIG']
+            (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
+             hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
+            #sigid, date1, ts1, *extra = gi['SIG_ID']
             print('commit ' + import_ref)
             print('mark :1')
             if ver in authorships:
                 author, date = authorships[ver]
-                print('committer {} {} +0000'.format(author, int(date.timestamp())))
+                print(
+                    'author {} {} +0000'.format(author, int(date.timestamp())))
+                print('committer {} {} +0000'.format(uid, gpg_ts(sig_ts)))
             else:
                 print(
                     'committer <malformed-changelog> {} +0000'
                     .format(int(dsc_finfo.first_seen_ts)))
-            msg = 'Import ' + ver
+            msg = 'Import {}'.format(ver)
+            if dsc_finfo.kr_name != 'debian-keyring':
+                msg += ' ({})'.format(dsc_finfo.kr_name)
             print('data {}'.format(len(msg.encode())))
             print(msg)
             if ver in predecessors:
