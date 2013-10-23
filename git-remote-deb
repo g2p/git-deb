@@ -45,6 +45,16 @@ AUTHOR_LINE_RE = re.compile(r'^ --\s*([^<>]*<[^<>]+>)  (.*)$')
 CHUNK_SIZE = 65536
 
 
+class JSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, types.SimpleNamespace):
+            return vars(o)
+        return super().default(o)
+
+def json_dump(val):
+    return json.dumps(val, cls=JSONEncoder)
+
+
 def apt_proxy_for(hostname):
     sbs = urllib.parse.urlsplit(hostname)
     sbd = sbs._asdict()
@@ -217,14 +227,15 @@ class Snapshots:
             # lex sort is fine here
             finfo = min(finfos, key=lambda fi: (
                 fi.first_seen, fi.name, fi.archive_name, fi.path))
-            finfo.first_seen_dt = isodate.parse_datetime(finfo.first_seen)
-            finfo.first_seen_ts = finfo.first_seen_dt.timestamp()
+            first_seen_dt = isodate.parse_datetime(finfo.first_seen)
+            finfo.first_seen_ts = first_seen_dt.timestamp()
             # Some orig.tar.gz have multiple names :(
             extra_names = set(fi.name for fi in finfos if fi.name != finfo.name)
             # this api only accepts sha1, though dscs keep other hashes
             path = self._get_file(fhash, finfo, extra_names)
             if finfo.name.endswith('.dsc'):
-                assert dsc_finfo is None
+                # Curl again. Horrors.
+                assert dsc_finfo is None, json_dump(srcinfo.fileinfo)
                 dsc_finfo = finfo
                 dsc_path = path
         assert dsc_finfo
