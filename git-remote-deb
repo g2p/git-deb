@@ -32,8 +32,9 @@ KEYRINGS = collections.OrderedDict([
     ('debian', '/usr/share/keyrings/debian-keyring.gpg'),
     ('debian-maintainers', '/usr/share/keyrings/debian-maintainers.gpg'),
     ('debian-emeritus', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')),
+    ('debian-emeritus-pgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.pgp')),
     ('debian-removed', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')),
-    ('debian-oldpgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.pgp')),
+    ('debian-removed-pgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.pgp')),
 ])
 
 # very relaxed, we'll be dealing with historical data
