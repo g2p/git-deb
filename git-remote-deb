@@ -225,7 +225,10 @@ class Snapshots:
             dsc_finfo.kr_name = kr_name
             break
         else:
-            bail('No valid signature found {}'.format(gi))
+            # For example, on wget_1.5.3-3.1.dsc
+            # ERRSIG 7D7C0636C76F38D2 20 2 01 1039606003 4
+            # indicating problems with an ElGamal signature
+            bail('No valid signature on {} {}'.format(dsc_path, gi))
         return dsc_finfo, dsc_path
 
 
