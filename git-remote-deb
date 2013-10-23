@@ -41,6 +41,9 @@ KEYRINGS = collections.OrderedDict([
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
 AUTHOR_LINE_RE = re.compile(r'^ --\s*([^<>]*<[^<>]+>)  (.*)$')
 
+# I've no idea
+CHUNK_SIZE = 65536
+
 
 def apt_proxy_for(hostname):
     sbs = urllib.parse.urlsplit(hostname)
@@ -159,12 +162,13 @@ class Snapshots:
                 #print('skipping {}'.format(name), file=sys.stderr)
                 return path
             os.unlink(path)
-        resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash)
+        resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash, stream=True)
         resp.raise_for_status()
         ts = finfo.first_seen_ts
         try:
             fd, tn = tempfile.mkstemp(dir=self.debsnap_dir)
-            os.write(fd, resp.content)
+            for chunk in resp.iter_content(CHUNK_SIZE):
+                os.write(fd, chunk)
             os.utime(fd, times=(ts, ts))
             os.rename(tn, path)
         except:
