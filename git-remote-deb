@@ -28,10 +28,11 @@ import urllib.parse
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
 KEYRINGS = collections.OrderedDict([
-    ('debian-keyring', '/usr/share/keyrings/debian-keyring.gpg'),
+    ('debian', '/usr/share/keyrings/debian-keyring.gpg'),
     ('debian-maintainers', '/usr/share/keyrings/debian-maintainers.gpg'),
-    ('emeritus-keyring', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')),
-    ('removed-keys', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')),
+    ('debian-emeritus', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')),
+    ('debian-removed', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')),
+    ('debian-oldpgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.pgp')),
 ])
 
 # very relaxed, we'll be dealing with historical data
@@ -330,11 +331,20 @@ def cmd_import(args):
             subprocess.check_call('git add -A'.split())
             tree_hash = subprocess.check_output(
                 'git write-tree'.split()).decode().rstrip()
+
             # See /usr/share/doc/gnupg/DETAILS.gz
-            kid, uid, *extra = dsc_finfo.gi['GOODSIG']
+            for sigtype in 'GOODSIG REVKEYSIG'.split():
+                try:
+                    kid, uid, *extra = dsc_finfo.gi[sigtype]
+                    break
+                except KeyError:
+                    pass
+            else:
+                bail('Not a good signature {}'.format(dsc_finfo.gi))
             (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
              hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
             #sigid, date1, ts1, *extra = gi['SIG_ID']
+
             print('commit ' + import_ref)
             print('mark :1')
             if ver in authorships:
@@ -347,8 +357,8 @@ def cmd_import(args):
                     'committer <malformed-changelog> {} +0000'
                     .format(int(dsc_finfo.first_seen_ts)))
             msg = 'Import {}'.format(ver)
-            if dsc_finfo.kr_name != 'debian-keyring':
-                msg += ' ({})'.format(dsc_finfo.kr_name)
+            if (dsc_finfo.kr_name, sigtype) != ('debian', 'GOODSIG'):
+                msg += ' ({}/{} {})'.format(dsc_finfo.kr_name, kid, sigtype)
             print('data {}'.format(len(msg.encode())))
             print(msg)
             if ver in predecessors:
