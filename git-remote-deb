@@ -22,6 +22,7 @@ import requests # pypi
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import urllib.parse
 
@@ -60,11 +61,56 @@ def apt_proxy_for(hostname):
     return {sbs.scheme: proxy_url}
 
 
+class CacheControl:
+    def __init__(self, path):
+        self.path = path
+
+
+class CacheForever(CacheControl):
+    def load_condition(self, cf):
+        return True
+
+
+class MaxAge(CacheControl):
+    def __init__(self, path, max_age):
+        super().__init__(path)
+        self.max_age = max_age
+
+    def load_condition(self, cf):
+        return time.time() < os.fstat(cf.fileno()).st_mtime + self.max_age
+
+
+def http_caching(sess, cache_dir):
+    try:
+        import cachecontrol # pypi:CacheControl
+        class DiskCache(cachecontrol.cache.BaseCache):
+            def __path_of_key(self, key):
+                return cache_dir + urllib.parse.quote(key, safe='')
+            def get(self, key):
+                try:
+                    return open(self.__path_of_key(key), 'rb').read()
+                except FileNotFoundError:
+                    pass
+            def set(self, key, value):
+                print('cache {} {}'.format(key, value), file=sys.stderr)
+                open(self.__path_of_key(key), 'wb').write(value)
+            def delete(self, key):
+                os.unlink(self.__path_of_key(key))
+        caching = cachecontrol.CacheControlAdapter(cache=DiskCache())
+    except ImportError:
+        pass
+    else:
+        print('Setting up caching', file=sys.stderr)
+        sess.mount('http://', caching)
+        sess.mount('https://', caching)
+
+
+
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
         # s.d.o/file/sha1 is good for 10 days
-        cache_dir = os.path.expanduser('~/.cache/git-remote-deb/')
+        self.cache_dir = os.path.expanduser('~/.cache/git-remote-deb/')
         self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
 
         self.http = sess = requests.Session()
@@ -74,34 +120,25 @@ class Snapshots:
         sess.timeout = 15.
         sess.trust_env = False
 
-        try:
-            raise ImportError  # not ready for prime time
+        # Requests doesn't have good disk caching options right now
+        #http_caching(sess, self.cache_dir)
 
-            import cachecontrol # pypi:CacheControl
-            class DiskCache(cachecontrol.cache.BaseCache):
-                def __path_of_key(self, key):
-                    return cache_dir + urllib.parse.quote(key, safe='')
-                def get(self, key):
-                    try:
-                        return open(self.__path_of_key(key), 'rb').read()
-                    except FileNotFoundError:
-                        pass
-                def set(self, key, value):
-                    print('cache {} {}'.format(key, value), file=sys.stderr)
-                    open(self.__path_of_key(key), 'wb').write(value)
-                def delete(self, key):
-                    os.unlink(self.__path_of_key(key))
-            caching = cachecontrol.CacheControlAdapter(cache=DiskCache())
-        except ImportError:
+    def _api_request(self, url, *, cache_control, **kwargs):
+        try:
+            cf = open(cache_control.path)
+        except FileNotFoundError:
             pass
         else:
-            print('Setting up caching', file=sys.stderr)
-            sess.mount('http://', caching)
-            sess.mount('https://', caching)
-
-    def _api_request(self, url, **kwargs):
+            if cache_control.load_condition(cf):
+                #print('cache hit ' + cache_control.path, file=sys.stderr)
+                return json.loads(cf.read(),
+                    object_hook=lambda args: types.SimpleNamespace(**args))
+            cf.close()
         resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
         resp.raise_for_status()
+        with open(cache_control.path, 'w') as cf:
+            cf.write(resp.text)
+
         return resp.json(
             object_hook=lambda args: types.SimpleNamespace(**args))
 
@@ -139,14 +176,19 @@ class Snapshots:
     def get_versions(self):
         # new to old, with version sort
         # may not match dates in case of backports and mistakes
-        vinfo = self._api_request('mr/package/{}/'.format(pkgname_quoted))
+        vinfo = self._api_request('mr/package/{}/'.format(pkgname_quoted),
+            cache_control=MaxAge(
+                self.cache_dir + pkgname_quoted + '_versions.json', 600))
         return [el.version for el in vinfo.result]
 
     def grab_srcfiles(self, ver):
         # Polipo doesn't understand no-args max-stale, so set it to 100 days
         srcinfo = self._api_request(
             'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
-            headers={'max-stale': '8640000'})
+            headers={'max-stale': '8640000'},
+            cache_control=CacheForever(
+                self.cache_dir + pkgname_quoted
+                + '_' + ver + '.srcfiles.json'))
         # sha1
         #hashes = [el.hash for el in srcinfo.result]
         dsc_finfo = None
@@ -278,6 +320,7 @@ def cmd_import(args):
         return
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
+    assert not any('/' in ver for ver in versions)
     #print(versions, file=sys.stderr)
     version_set = set(versions)
     if depth:
