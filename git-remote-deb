@@ -109,6 +109,9 @@ def http_caching(sess, cache_dir):
         sess.mount('https://', caching)
 
 
+class MissingSource(Exception):
+    pass
+
 
 class Snapshots:
     def __init__(self):
@@ -139,7 +142,9 @@ class Snapshots:
                     object_hook=lambda args: types.SimpleNamespace(**args))
             cf.close()
         resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            print('Request error on {}'.format(url), file=sys.stderr)
+            resp.raise_for_status()
         with open(cache_control.path, 'w') as cf:
             cf.write(resp.text)
 
@@ -190,13 +195,17 @@ class Snapshots:
         return [el.version for el in vinfo.result]
 
     def grab_srcfiles(self, ver):
-        # Polipo doesn't understand no-args max-stale, so set it to 100 days
-        srcinfo = self._api_request(
-            'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
-            headers={'max-stale': '8640000'},
-            cache_control=CacheForever(
-                self.cache_dir + pkgname_quoted
-                + '_' + ver + '.srcfiles.json'))
+        try:
+            # Polipo doesn't understand no-args max-stale, so set it to 100 days
+            srcinfo = self._api_request(
+                'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
+                headers={'max-stale': '8640000'},
+                cache_control=CacheForever(
+                    self.cache_dir + pkgname_quoted
+                    + '_' + ver + '.srcfiles.json'))
+        except requests.HTTPError:
+            raise MissingSource(ver)
+
         # sha1
         #hashes = [el.hash for el in srcinfo.result]
         dsc_finfo = None
@@ -348,7 +357,15 @@ def cmd_import(args):
     todo = set()
     with tempfile.TemporaryDirectory() as tdir:
         for ver in reversed(versions):
-            dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+            try:
+                dsc_finfo, dsc_path = snaps.grab_srcfiles(ver)
+            except MissingSource:
+                # http://snapshot.debian.org/package/curl/6.0-1.1.1/
+                print(
+                    'Version {} has no source package'.format(ver),
+                    file=sys.stderr)
+                version_set.remove(ver)
+                continue
             first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
             subprocess.call(
