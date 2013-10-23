@@ -55,6 +55,11 @@ def json_dump(val):
     return json.dumps(val, cls=JSONEncoder)
 
 
+def printerr(msg):
+    print(msg, file=sys.stderr)
+warn = printerr
+
+
 def apt_proxy_for(hostname):
     sbs = urllib.parse.urlsplit(hostname)
     sbd = sbs._asdict()
@@ -106,7 +111,7 @@ def http_caching(sess, cache_dir):
                 except FileNotFoundError:
                     pass
             def set(self, key, value):
-                print('cache {} {}'.format(key, value), file=sys.stderr)
+                printerr('cache {} {}'.format(key, value))
                 open(self.__path_of_key(key), 'wb').write(value)
             def delete(self, key):
                 os.unlink(self.__path_of_key(key))
@@ -114,7 +119,7 @@ def http_caching(sess, cache_dir):
     except ImportError:
         pass
     else:
-        print('Setting up caching', file=sys.stderr)
+        printerr('Setting up caching')
         sess.mount('http://', caching)
         sess.mount('https://', caching)
 
@@ -151,14 +156,13 @@ class Snapshots:
             pass
         else:
             if cache_control.load_condition(cf):
-                #print('cache hit ' + cache_control.path, file=sys.stderr)
+                #printerr('cache hit ' + cache_control.path)
                 return json.loads(cf.read(),
                     object_hook=lambda args: types.SimpleNamespace(**args))
             cf.close()
         resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
         if resp.status_code >= 400:
-            print('HTTP error {} on {}'.format(resp.status_code, url),
-                  file=sys.stderr)
+            warn('HTTP error {} on {}'.format(resp.status_code, url))
             resp.raise_for_status()
         with open(cache_control.path, 'w') as cf:
             cf.write(resp.text)
@@ -171,7 +175,7 @@ class Snapshots:
         name = finfo.name
         size = finfo.size
         path = self.debsnap_dir + name
-        #print(name, size, finfo, extra_names, file=sys.stderr)
+        #printerr(name, size, finfo, extra_names)
         try:
             st = os.stat(path)
         except FileNotFoundError:
@@ -180,7 +184,7 @@ class Snapshots:
             # Check for partial downloads, anything else will
             # be caught by dscverify
             if st.st_size == size:
-                #print('skipping {}'.format(name), file=sys.stderr)
+                #printerr('skipping {}'.format(name))
                 return path
             os.unlink(path)
         resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash, stream=True)
@@ -245,8 +249,8 @@ class Snapshots:
                 dsc_finfos.add(finfo)
         assert dsc_finfos
         if len(dsc_finfos) > 1:
-            print('Multiple dscs for version {} {}'.format(
-                ver, [fi.local_path for fi in dsc_finfos]), file=sys.stderr)
+            warn('Multiple dscs for version {} {}'.format(
+                ver, [fi.local_path for fi in dsc_finfos]))
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
             # Slow
@@ -276,7 +280,7 @@ def cmd_capabilities(args):
     print()
 
 def bail(msg):
-    print(msg, file=sys.stderr)
+    printerr(msg)
     sys.exit(1)
 
 depth = None
@@ -315,7 +319,7 @@ def parse_changelog(cl, skip_versions):
         if not within:
             match = VERSION_LINE_RE.match(line)
             if not match:
-                print('Giving up on changelog {!r}'.format(line), file=sys.stderr)
+                warn('Giving up on changelog {!r}'.format(line))
                 break
             ver1, = match.groups()
             versions.append(ver1)
@@ -366,7 +370,7 @@ def cmd_import(args):
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
     assert not any('/' in ver for ver in versions)
-    #print(versions, file=sys.stderr)
+    #printerr(versions)
     version_set = set(versions)
     if depth:
         versions = versions[:depth]
@@ -383,9 +387,7 @@ def cmd_import(args):
                 dsc_finfo = snaps.grab_srcfiles(ver)
             except MissingSource:
                 # http://snapshot.debian.org/package/curl/6.0-1.1.1/
-                print(
-                    'Version {} has no source package'.format(ver),
-                    file=sys.stderr)
+                warn('Version {} has no source package'.format(ver))
                 version_set.remove(ver)
                 continue
             first_seen[ver] = dsc_finfo.first_seen
@@ -406,13 +408,11 @@ def cmd_import(args):
                     successors[ver1].append(ver)
                     break
                 else:
-                    print('Found ghost version {}'.format(ver1),
-                              file=sys.stderr)
+                    warn('Found ghost version {}'.format(ver1))
             else:
                 todo.add(ver)
                 if not is_root:
-                    print('Version {} has no predecessor'.format(ver),
-                          file=sys.stderr)
+                    warn('Version {} has no predecessor'.format(ver))
             authorships[ver] = authorship
             is_root = False
         assert todo
@@ -537,7 +537,7 @@ for line in sys.stdin:
             continue
         else:
             break
-    print(line1, file=sys.stderr)
+    printerr(line1)
     args = parser1.parse_args(line1.split())
     if args.command == 'import':
         if not import_batch:
