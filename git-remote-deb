@@ -26,6 +26,8 @@ import urllib.parse
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
+EMERITUS_KEYRING = os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')
+REMOVED_KEYS = os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')
 
 # very relaxed, we'll be dealing with historical data
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
@@ -159,7 +161,15 @@ class Snapshots:
                 dsc_path = path
         assert dsc_finfo
         # Slow
-        subprocess.check_call(['dscverify', dsc_path], stdout=subprocess.DEVNULL)
+        try:
+            subprocess.check_call(['dscverify', dsc_path], stdout=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            try:
+                subprocess.check_call(['gpgv', '--keyring', EMERITUS_KEYRING, '--', dsc_path])
+                print('Found in the emeritus keyring', file=sys.stderr)
+            except subprocess.CalledProcessError:
+                subprocess.check_call(['gpgv', '--keyring', REMOVED_KEYS, '--', dsc_path])
+                print('Found in removed keys', file=sys.stderr)
         return dsc_finfo, dsc_path
 
 
