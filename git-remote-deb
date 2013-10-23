@@ -146,11 +146,12 @@ class Snapshots:
         return resp.json(
             object_hook=lambda args: types.SimpleNamespace(**args))
 
-    def _get_file(self, fhash, finfo):
+    def _get_file(self, fhash, finfo, extra_names):
         # ignoring archive_name and path
         name = finfo.name
         size = finfo.size
         path = self.debsnap_dir + name
+        #print(name, size, finfo, extra_names, file=sys.stderr)
         try:
             st = os.stat(path)
         except FileNotFoundError:
@@ -171,6 +172,8 @@ class Snapshots:
                 os.write(fd, chunk)
             os.utime(fd, times=(ts, ts))
             os.rename(tn, path)
+            for ename in extra_names:
+                os.link(path, self.debsnap_dir + ename)
         except:
             os.unlink(tn)
             raise
@@ -200,14 +203,17 @@ class Snapshots:
         for fhash, finfos in vars(srcinfo.fileinfo).items():
             assert finfos
             if len(finfos) > 1:
-                # appears in multiple archives
-                assert len(set((fi.name, fi.size) for fi in finfos)) == 1, finfos
+                # some appear in multiple archives
+                assert len(set((fi.size) for fi in finfos)) == 1, finfos
             # lex sort is fine here
-            finfo = min(finfos, key=lambda fi: fi.first_seen)
+            finfo = min(finfos, key=lambda fi: (
+                fi.first_seen, fi.name, fi.archive_name, fi.path))
             finfo.first_seen_dt = isodate.parse_datetime(finfo.first_seen)
             finfo.first_seen_ts = finfo.first_seen_dt.timestamp()
+            # Some orig.tar.gz have multiple names :(
+            extra_names = set(fi.name for fi in finfos if fi.name != finfo.name)
             # this api only accepts sha1, though dscs keep other hashes
-            path = self._get_file(fhash, finfo)
+            path = self._get_file(fhash, finfo, extra_names)
             if finfo.name.endswith('.dsc'):
                 assert dsc_finfo is None
                 dsc_finfo = finfo
