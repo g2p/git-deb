@@ -392,6 +392,7 @@ def cmd_import(args):
     predecessors = {}
     successors = collections.defaultdict(list)
     skip_versions = set()
+    ghosts = set()
     is_root = True
     todo = set()
     with tempfile.TemporaryDirectory() as tdir:
@@ -414,17 +415,21 @@ def cmd_import(args):
                 continue
             assert cl_vers[0] == ver, (cl_vers[0], ver)
             skip_versions.add(ver)
+            ghosts1 = set()
             for ver1 in cl_vers[1:]:
                 if ver1 in version_set:
                     predecessors[ver] = ver1
                     successors[ver1].append(ver)
                     break
-                else:
-                    warn('Found ghost version {}'.format(ver1))
+                elif ver1 not in ghosts:
+                    ghosts1.add(ver1)
             else:
                 todo.add(ver)
                 if not is_root:
                     warn('Version {} has no predecessor'.format(ver))
+            if ghosts1:
+                warn('Found ghost versions {}'.format(ghosts1))
+                ghosts.update(ghosts1)
             authorships[ver] = authorship
             is_root = False
         assert todo
