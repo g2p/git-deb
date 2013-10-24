@@ -49,9 +49,18 @@ def json_dump(val):
     return json.dumps(val, cls=JSONEncoder)
 
 
+def ignore(msg):
+    pass
+
 def printerr(msg):
     print(msg, file=sys.stderr)
+
 warn = printerr
+debug = ignore
+
+def bail(msg):
+    printerr(msg)
+    sys.exit(1)
 
 
 def warn_missing_keyrings():
@@ -132,7 +141,7 @@ def http_caching(sess, cache_dir):
                 except FileNotFoundError:
                     pass
             def set(self, key, value):
-                printerr('cache {} {}'.format(key, value))
+                debug('cache {} {}'.format(key, value))
                 open(self.__path_of_key(key), 'wb').write(value)
             def delete(self, key):
                 os.unlink(self.__path_of_key(key))
@@ -140,7 +149,7 @@ def http_caching(sess, cache_dir):
     except ImportError:
         pass
     else:
-        printerr('Setting up caching')
+        debug('Setting up caching')
         sess.mount('http://', caching)
         sess.mount('https://', caching)
 
@@ -176,7 +185,7 @@ class Snapshots:
             pass
         else:
             if cache_control.load_condition(cf):
-                #printerr('cache hit ' + cache_control.path)
+                #debug('cache hit ' + cache_control.path)
                 return json.loads(cf.read(),
                     object_hook=lambda args: types.SimpleNamespace(**args))
             cf.close()
@@ -195,7 +204,7 @@ class Snapshots:
         name = finfo.name
         size = finfo.size
         path = self.debsnap_dir + name
-        #printerr(name, size, finfo, extra_names)
+        #debug(name, size, finfo, extra_names)
         try:
             st = os.stat(path)
         except FileNotFoundError:
@@ -204,7 +213,7 @@ class Snapshots:
             # Check for partial downloads, anything else will
             # be caught by dscverify
             if st.st_size == size:
-                #printerr('skipping {}'.format(name))
+                #debug('skipping {}'.format(name))
                 return path
             os.unlink(path)
         resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash, stream=True)
@@ -316,10 +325,6 @@ def cmd_capabilities(args):
     print('*refspec refs/heads/*:refs/debian/{}/*'.format(remote_quoted))
     print()
 
-def bail(msg):
-    printerr(msg)
-    sys.exit(1)
-
 depth = None
 def cmd_option(args):
     global depth
@@ -335,6 +340,13 @@ def cmd_option(args):
             bail(msg)
         else:
             print('ok')
+    elif args.name == 'verbosity':
+        verbosity = int(args.value)
+        if verbosity < 1:
+            warn = ignore
+        elif verbosity > 1:
+            debug = printerr
+        print('ok')
     else:
         print('unsupported')
 
@@ -411,7 +423,7 @@ def cmd_import(args):
     assert not any('/' in ver for ver in versions)
     for ver in skip:
         versions.remove(ver)
-    #printerr(versions)
+    #debug(versions)
     version_set = set(versions)
     if depth:
         versions_depth = versions[:depth]
@@ -605,7 +617,7 @@ for line in sys.stdin:
             continue
         else:
             break
-    printerr(line1)
+    debug(line1)
     args = parser1.parse_args(line1.split())
     if args.command == 'import':
         if not import_batch:
