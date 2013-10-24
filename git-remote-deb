@@ -459,7 +459,12 @@ def cmd_import(args):
             for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
                 try:
                     kid, uid, *extra = dsc_finfo.gi[sigtype]
-                    assert IDENT_RE.match(uid), dsc_finfo
+                    if not IDENT_RE.match(uid):
+                        if '@' in uid:
+                            uid = '<{}>'.format(uid)
+                        else:
+                            bail('Bad uid {} on {}'
+                                 .format(uid, json_dump(dsc_finfo)))
                     break
                 except KeyError:
                     pass
