@@ -281,8 +281,6 @@ class Snapshots:
                 # Or missing keys
                 # On grub_0.97-16.1~bpo.1.dsc
                 # ERRSIG 6908386EC98FE2A1 17 2 01 1160038149 9
-                # On gnupg_1.4.6-1~bpo.1.dsc
-                # 2006-12-08 1165592809 0 3 0 17 2 01 85BC71AE6649EFE4B12196436908386EC98FE2A1
                 bail('No valid signature on {} {}'.format(dsc_path, gi))
         return min(dsc_finfos, key=upload_precedence)
 
@@ -386,6 +384,8 @@ def cmd_import(args):
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
     assert not any('/' in ver for ver in versions)
+    for ver in skip:
+        versions.remove(ver)
     #printerr(versions)
     version_set = set(versions)
     if depth:
@@ -506,8 +506,18 @@ assert not url.fragment
 
 if True:
     # use snapshot.debian.org
-    assert not url.query
     distribution = 'debian'
+    if url.query:
+        # grub?skip=0.97-16.1~bpo.1
+        # sudo?skip=1.6.2p2-2.2
+        # git clone deb::gnupg?skip=1.4.6-1~bpo.1,1.4.6-2.1 gnupg
+        urlparams = urllib.parse.parse_qs(
+            url.query, strict_parsing=True, errors='strict')
+        assert {'skip'}.issuperset(urlparams.keys()), urlparams
+        if 'skip' in urlparams:
+            skip = set(sum((el.split(',') for el in urlparams['skip']), []))
+    else:
+        skip = set()
 else:
     # use launchpad
     # the launchpad dataset is usable enough once you know the right api,
