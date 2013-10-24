@@ -39,3 +39,9 @@ In the case of bad/invalid/missing signatures, you may need to skip versions:
     git clone deb::sudo?skip=1.6.2p2-2.2 sudo
     git clone deb::gnupg?skip=1.4.6-1~bpo.1,1.4.6-2.1 gnupg
 
+If a key isn't in the debian keyrings but you do have it in your own keyring,
+you may trust it manually:
+
+    git clone 'deb::openssl?skip=0.9.8n-1+powerpcspe1;trust=0BE7C53FC1DE67F3' openssl
+    git clone 'deb::gnupg?skip=1.4.6-2.1&trust=6908386EC98FE2A1' gnupg
+
