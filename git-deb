@@ -15,11 +15,14 @@ def cmd_get_keyrings(args):
     with tempfile.TemporaryDirectory() as tdir:
         subprocess.check_call(
             'apt-get source -b debian-keyring'.split(), cwd=tdir)
-    for krn in (
-        glob.glob('debian-keyring-*/output/keyrings/*.gpg')
-        + glob.glob('debian-keyring-*/output/keyrings/*.pgp')
-    ):
-        shutil.copy(krn, KEYRINGS_DIR)
+        krs = glob.glob(tdir + '/debian-keyring-*/output/keyrings/*.gpg') \
+            + glob.glob(tdir + '/debian-keyring-*/output/keyrings/*.pgp')
+        if not krs:
+            print('No keyrings found, incompatible change in debian-keyring?',
+                  file=sys.stderr)
+            return 2
+        for krn in krs:
+            shutil.copy(krn, KEYRINGS_DIR)
 
 
 parser = argparse.ArgumentParser()
