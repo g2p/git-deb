@@ -9,7 +9,7 @@ Python 3.3, Pip, GPG, Git
 
 You may install the following packages first:
 
-    sudo aptitude install python3-{apt,chardet,debian,isodate,pip,requests}
+    sudo aptitude install python3-{chardet,debian,isodate,pip,requests}
 
 The python3-debian package is currently required, the version on PyPI
 isn't Python3 compatible.
@@ -17,7 +17,7 @@ isn't Python3 compatible.
 # Installation
 
     pip3 install --user git-deb
-    cp -lt ~/bin ~/.local/bin/git-{remote-,}deb
+    cp -flt ~/bin ~/.local/bin/git-{remote-,}deb
 
 # Usage
 

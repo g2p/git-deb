@@ -7,14 +7,13 @@ Workaround:
 deb::deb:pkgname deb::pkgname
 """
 
-import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
-import chardet # pypi:chardet
+import chardet # pypi
 import collections
 import debian.deb822 # pypi:python-debian
 import email.utils
 import io
-import isodate # pypi:isodate
+import isodate # pypi
 import json
 import os
 import re
@@ -91,24 +90,26 @@ KEYRINGS = collections.OrderedDict(prepare_keyrings([
 ]))
 
 
-def apt_proxy_for(hostname):
-    sbs = urllib.parse.urlsplit(hostname)
-    sbd = sbs._asdict()
+if False:
+    apt_pkg.init_config()
+    def apt_proxy_for(hostname):
+        sbs = urllib.parse.urlsplit(hostname)
+        sbd = sbs._asdict()
 
-    # priority order than matches man:apt.conf
-    proxy_url = apt_pkg.config.get(
-        'Acquire::{scheme}::Proxy::{netloc}'.format(**sbd))
-    if not proxy_url:
+        # priority order than matches man:apt.conf
         proxy_url = apt_pkg.config.get(
-            'Acquire::{scheme}::Proxy'.format(**sbd))
-    if proxy_url == 'DIRECT':
-        proxy_url = None
-    elif not proxy_url:
-        envvar = sbs.scheme + '_proxy'
-        proxy_url = os.environ.get(envvar)
-    # May set the key to None, to hopefully prevent requests
-    # from parsing the environment
-    return {sbs.scheme: proxy_url}
+            'Acquire::{scheme}::Proxy::{netloc}'.format(**sbd))
+        if not proxy_url:
+            proxy_url = apt_pkg.config.get(
+                'Acquire::{scheme}::Proxy'.format(**sbd))
+        if proxy_url == 'DIRECT':
+            proxy_url = None
+        elif not proxy_url:
+            envvar = sbs.scheme + '_proxy'
+            proxy_url = os.environ.get(envvar)
+        # May set the key to None, to hopefully prevent requests
+        # from parsing the environment
+        return {sbs.scheme: proxy_url}
 
 
 class CacheControl:
@@ -544,7 +545,6 @@ def cmd_import(args):
             done.add(ver)
     done_refs.add(remote_ref)
 
-apt_pkg.init_config()
 snaps = Snapshots()
 
 parser0 = argparse.ArgumentParser()

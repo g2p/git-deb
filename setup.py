@@ -16,7 +16,6 @@ setup(
     install_requires=[
         'chardet',
         'isodate',
-        'python-apt',
         'python-debian >= 0.1.21-nmu1',
         'requests',
     ],
