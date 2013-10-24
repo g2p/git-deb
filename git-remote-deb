@@ -11,7 +11,7 @@ import apt_pkg # pypi:python-apt, apt:python3-apt
 import argparse
 import chardet # pypi:chardet
 import collections
-import debian.deb822 # pypi:python-apt
+import debian.deb822 # pypi:python-debian
 import email.utils
 import io
 import isodate # pypi:isodate
