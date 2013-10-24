@@ -33,7 +33,8 @@ KEYRINGS_PATH = (os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyr
 # very relaxed, we'll be dealing with historical data
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
 AUTHOR_LINE_RE = re.compile(r'^ --\s*([^<>]*<[^<>]+>)  (.*)$')
-IDENT_RE = re.compile(r'^[^<>]*<[^<>]+>$')
+IDENT_RE = re.compile(r'^([^<>]*?)\s*<([^<>]+)>$')
+SIG_KID_RE = re.compile(r'^[0-9A-F]{16}$')
 
 # I've no idea
 CHUNK_SIZE = 65536
@@ -501,6 +502,8 @@ def cmd_import(args):
                     if not IDENT_RE.match(uid):
                         if '@' in uid:
                             uid = '<{}>'.format(uid)
+                        elif kid in email_fallbacks:
+                            uid += ' <{}>'.format(email_fallbacks[kid])
                         else:
                             bail('Bad uid {} on {}'
                                  .format(uid, json_dump(dsc_finfo)))
@@ -554,6 +557,10 @@ assert url.scheme == 'deb'
 assert not url.netloc
 assert not url.fragment
 
+urlparams = {}
+email_fallbacks = {}
+skip = set()
+
 if True:
     # use snapshot.debian.org
     distribution = 'debian'
@@ -564,20 +571,21 @@ if True:
         urlparams = urllib.parse.parse_qs(
             url.query.replace('+', '%2B'),
             strict_parsing=True, errors='strict')
-    else:
-        urlparams = {}
 
-    assert {'skip', 'trust'}.issuperset(urlparams.keys()), urlparams
+    assert {'skip', 'trust', 'email'}.issuperset(urlparams.keys()), urlparams
     if 'skip' in urlparams:
         skip = set(sum((el.split(',') for el in urlparams['skip']), []))
-    else:
-        skip = set()
     if 'trust' in urlparams:
-        trust = set(sum((el.split(',') for el in urlparams['trust']), []))
-        for kid in trust:
+        for kid in set(sum((el.split(',') for el in urlparams['trust']), [])):
             with open(os.path.join(KEYRINGS_PATH[0], kid + '.gpg'), 'w') as krf:
                 subprocess.check_call(['gpg', '--export', '--', kid], stdout=krf)
             KEYRINGS['local:' + kid] = krf.name
+    if 'email' in urlparams:
+        for emap in set(sum((el.split(',') for el in urlparams['email']), [])):
+            kid, eml = IDENT_RE.match(emap).groups()
+            assert SIG_KID_RE.match(kid), kid
+            # Check the key exists?
+            email_fallbacks[kid] = eml
 else:
     # use launchpad
     # the launchpad dataset is usable enough once you know the right api,
@@ -588,8 +596,6 @@ else:
         urlparams = urllib.parse.parse_qs(
             url.query, strict_parsing=True, errors='strict')
         assert urlparams.keys() in {'distribution', 'archive'}, urlparams
-    else:
-        urlparams = {}
 
     distribution = urlparams.get('distribution', 'ubuntu')
     archive = urlparams.get('archive', 'primary')

@@ -34,6 +34,10 @@ signatures that can't be verified with current Debian keyrings.
     git deb get-keyrings
 
 will download historical keyrings (using Apt).
+Commits using those keys will be annotated.
+
+# Fixes
+
 In the case of bad/invalid/missing signatures, you may need to skip versions:
 
     git clone deb::sudo?skip=1.6.2p2-2.2 sudo
@@ -44,4 +48,8 @@ you may trust it manually:
 
     git clone 'deb::openssl?skip=0.9.8n-1+powerpcspe1;trust=0BE7C53FC1DE67F3' openssl
     git clone 'deb::gnupg?skip=1.4.6-2.1&trust=6908386EC98FE2A1' gnupg
+
+If a key is missing an email identity, you may provide it with another parameter:
+
+    ?email='0123456789ABCDEF <email@host>'
 
