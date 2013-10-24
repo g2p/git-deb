@@ -137,7 +137,6 @@ class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
         # s.d.o/file/sha1 is good for 10 days
-        self.cache_dir = os.path.expanduser('~/.cache/git-remote-deb/')
         self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
 
         self.http = sess = requests.Session()
@@ -211,7 +210,7 @@ class Snapshots:
         # may not match dates in case of backports and mistakes
         vinfo = self._api_request('mr/package/{}/'.format(pkgname_quoted),
             cache_control=MaxAge(
-                self.cache_dir + pkgname_quoted + '_versions.json', 600))
+                self.debsnap_dir + pkgname_quoted + '_versions.json', 600))
         return [el.version for el in vinfo.result]
 
     def grab_srcfiles(self, ver):
@@ -221,7 +220,7 @@ class Snapshots:
                 'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
                 headers={'max-stale': '8640000'},
                 cache_control=CacheForever(
-                    self.cache_dir + pkgname_quoted
+                    self.debsnap_dir + pkgname_quoted
                     + '_' + ver + '.srcfiles.json'))
         except requests.HTTPError as err:
             if err.response.status_code == 404:
