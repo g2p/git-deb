@@ -20,13 +20,13 @@ isn't Python3 compatible.
     cp -lt ~/bin ~/.local/bin/git-{remote-,}deb
 
 # Usage
-    
+
     git clone deb::pkgname
 
 The history contains authors (from Debian changelogs) and
 committers (from dsc signatures), both with appropriate dates.
 
-    git log --graph --all --pretty='%Cred%H%Cblue%d%Creset%nChangelog %ai %an %ae%nSignature %ci %cn %ce%n%s%b%n'
+    git log --graph --all --pretty='%Cred%H%Cblue%d%Creset%nChangelog %ai %an <%ae>%nSignature %ci %cn <%ce>%n%s%b%n'
 
 Packages that have been in the archive for some time may have
 signatures that can't be verified with current Debian keyrings.
