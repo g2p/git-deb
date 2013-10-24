@@ -11,6 +11,9 @@ You may install the following packages first:
 
     sudo aptitude install python3-{apt,chardet,debian,isodate,pip,requests}
 
+The python3-debian package is currently required, the version on PyPI
+isn't Python3 compatible.
+
 # Installation
 
     pip3 install --user git-deb

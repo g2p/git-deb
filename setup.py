@@ -5,7 +5,7 @@ from distutils.core import setup
 
 setup(
     name='git-deb',
-    version='0.1.0',
+    version='0.1.1',
     author='Gabriel de Perthuis',
     author_email='g2p.code+gitdeb@gmail.com',
     url='https://github.com/g2p/git-deb',
@@ -17,7 +17,7 @@ setup(
         'chardet',
         'isodate',
         'python-apt',
-        'python-debian',
+        'python-debian >= 0.1.21-nmu1',
         'requests',
     ],
     classifiers='''
