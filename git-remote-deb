@@ -28,14 +28,7 @@ import urllib.parse
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
-KEYRINGS = collections.OrderedDict([
-    ('debian', '/usr/share/keyrings/debian-keyring.gpg'),
-    ('debian-maintainers', '/usr/share/keyrings/debian-maintainers.gpg'),
-    ('debian-emeritus', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.gpg')),
-    ('debian-emeritus-pgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/emeritus-keyring.pgp')),
-    ('debian-removed', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.gpg')),
-    ('debian-removed-pgp', os.path.expanduser('~/var/co/git-bzr/debian-keyring/output/keyrings/removed-keys.pgp')),
-])
+KEYRINGS_PATH = (os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyrings')
 
 # very relaxed, we'll be dealing with historical data
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')
@@ -59,6 +52,33 @@ def json_dump(val):
 def printerr(msg):
     print(msg, file=sys.stderr)
 warn = printerr
+
+
+def warn_missing_keyrings():
+    warn('Some keyrings are missing, please run `git deb get-keyrings`')
+
+def prepare_keyrings(krs):
+    global missing_keyrings
+    missing_keyrings = False
+    for sname, fname in krs:
+        for sp in KEYRINGS_PATH:
+            kr_path = os.path.join(sp, fname)
+            if os.path.exists(kr_path):
+                yield sname, kr_path
+                break
+        else:
+            missing_keyrings = True
+    if missing_keyrings:
+        warn_missing_keyrings()
+
+KEYRINGS = collections.OrderedDict(prepare_keyrings([
+    ('debian', 'debian-keyring.gpg'),
+    ('debian-maintainers', 'debian-maintainers.gpg'),
+    ('debian-emeritus', 'emeritus-keyring.gpg'),
+    ('debian-emeritus-pgp', 'emeritus-keyring.pgp'),
+    ('debian-removed', 'removed-keys.gpg'),
+    ('debian-removed-pgp', 'removed-keys.pgp'),
+]))
 
 
 def apt_proxy_for(hostname):
@@ -284,6 +304,8 @@ class Snapshots:
                 # Or missing keys
                 # On grub_0.97-16.1~bpo.1.dsc
                 # ERRSIG 6908386EC98FE2A1 17 2 01 1160038149 9
+                if 'NO_PUBKEY' in gi and missing_keyrings:
+                    warn_missing_keyrings()
                 bail('No valid signature on {} {}'.format(dsc_path, gi))
         return min(dsc_finfos, key=upload_precedence)
 

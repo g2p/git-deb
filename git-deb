@@ -1,0 +1,34 @@
+#!/usr/bin/python3.3
+
+import argparse
+import glob
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+KEYRINGS_DIR = os.path.expanduser('~/.local/share/keyrings')
+
+def cmd_get_keyrings(args):
+    os.makedirs(KEYRINGS_DIR, mode=0o755)
+    with tempfile.TemporaryDirectory() as tdir:
+        subprocess.check_call(
+            'apt-get source -b debian-keyring'.split(), cwd=tdir)
+    for krn in (
+        glob.glob('debian-keyring-*/output/keyrings/*.gpg')
+        + glob.glob('debian-keyring-*/output/keyrings/*.pgp')
+    ):
+        shutil.copy(krn, KEYRINGS_DIR)
+
+
+parser = argparse.ArgumentParser()
+commands = parser.add_subparsers(dest='command')
+sp_get_keyrings = commands.add_parser('get-keyrings')
+sp_get_keyrings.set_defaults(action=cmd_get_keyrings)
+args = parser.parse_args()
+if sys.argv[1:]:
+    sys.exit(args.action(args))
+else:
+    parser.print_help()
+
