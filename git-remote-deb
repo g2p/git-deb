@@ -330,6 +330,8 @@ def parse_changelog(cl, skip_versions):
         if not line:
             continue
         if not within:
+            if line in ('Local variables:', 'Old Changelog:'):
+                break
             match = VERSION_LINE_RE.match(line)
             if not match:
                 warn('Giving up on changelog {!r}'.format(line))
