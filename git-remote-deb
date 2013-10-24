@@ -414,7 +414,10 @@ def cmd_import(args):
     #printerr(versions)
     version_set = set(versions)
     if depth:
-        versions = versions[:depth]
+        versions_depth = versions[:depth]
+    else:
+        versions_depth = versions
+    versions_depth_set = set(versions_depth)
     authorships = {}
     first_seen = {}
     predecessors = {}
@@ -424,7 +427,7 @@ def cmd_import(args):
     is_root = True
     todo = set()
     with tempfile.TemporaryDirectory() as tdir:
-        for ver in reversed(versions):
+        for ver in reversed(versions_depth):
             try:
                 dsc_finfo = snaps.grab_srcfiles(ver)
             except MissingSource:
@@ -448,6 +451,8 @@ def cmd_import(args):
                 if ver1 in version_set:
                     predecessors[ver] = ver1
                     successors[ver1].append(ver)
+                    if depth and ver1 not in versions_depth_set:
+                        todo.add(ver)
                     break
                 elif ver1 not in ghosts:
                     ghosts1.add(ver1)
@@ -512,7 +517,9 @@ def cmd_import(args):
             print('data {}'.format(len(msg.encode())))
             print(msg)
             if ver in predecessors:
-                print('from ' + tagname(predecessors[ver]))
+                pred = predecessors[ver]
+                if not depth or pred in versions_depth_set:
+                    print('from ' + tagname(predecessors[ver]))
             print('deleteall')
             print('M 040000 {} '.format(tree_hash))
             print()
