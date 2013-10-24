@@ -11,7 +11,7 @@ import tempfile
 KEYRINGS_DIR = os.path.expanduser('~/.local/share/keyrings')
 
 def cmd_get_keyrings(args):
-    os.makedirs(KEYRINGS_DIR, mode=0o755)
+    os.makedirs(KEYRINGS_DIR, exist_ok=True)
     with tempfile.TemporaryDirectory() as tdir:
         subprocess.check_call(
             'apt-get source -b debian-keyring'.split(), cwd=tdir)
