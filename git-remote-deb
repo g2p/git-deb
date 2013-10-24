@@ -564,17 +564,20 @@ if True:
         urlparams = urllib.parse.parse_qs(
             url.query.replace('+', '%2B'),
             strict_parsing=True, errors='strict')
-        assert {'skip', 'trust'}.issuperset(urlparams.keys()), urlparams
-        if 'skip' in urlparams:
-            skip = set(sum((el.split(',') for el in urlparams['skip']), []))
-        if 'trust' in urlparams:
-            trust = set(sum((el.split(',') for el in urlparams['trust']), []))
-            for kid in trust:
-                with open(os.path.join(KEYRINGS_PATH[0], kid + '.gpg'), 'w') as krf:
-                    subprocess.check_call(['gpg', '--export', '--', kid], stdout=krf)
-                KEYRINGS['local:' + kid] = krf.name
+    else:
+        urlparams = {}
+
+    assert {'skip', 'trust'}.issuperset(urlparams.keys()), urlparams
+    if 'skip' in urlparams:
+        skip = set(sum((el.split(',') for el in urlparams['skip']), []))
     else:
         skip = set()
+    if 'trust' in urlparams:
+        trust = set(sum((el.split(',') for el in urlparams['trust']), []))
+        for kid in trust:
+            with open(os.path.join(KEYRINGS_PATH[0], kid + '.gpg'), 'w') as krf:
+                subprocess.check_call(['gpg', '--export', '--', kid], stdout=krf)
+            KEYRINGS['local:' + kid] = krf.name
 else:
     # use launchpad
     # the launchpad dataset is usable enough once you know the right api,
