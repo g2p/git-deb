@@ -561,7 +561,8 @@ if True:
         # sudo?skip=1.6.2p2-2.2
         # git clone deb::gnupg?skip=1.4.6-1~bpo.1,1.4.6-2.1 gnupg
         urlparams = urllib.parse.parse_qs(
-            url.query, strict_parsing=True, errors='strict')
+            url.query.replace('+', '%2B'),
+            strict_parsing=True, errors='strict')
         assert {'skip'}.issuperset(urlparams.keys()), urlparams
         if 'skip' in urlparams:
             skip = set(sum((el.split(',') for el in urlparams['skip']), []))
