@@ -272,11 +272,15 @@ class Snapshots:
                 finfo.kr_name = kr_name
                 break
             else:
-                # For example, on wget_1.5.3-3.1.dsc
+                # On wget_1.5.3-3.1.dsc
                 # ERRSIG 7D7C0636C76F38D2 20 2 01 1039606003 4
                 # indicating problems with an ElGamal signature
+                # gnupg 1.2.5-3 can verify it, 1.4.0-3 can't:
+                # 2002-12-11 1039606003 0 3 0 20 2 01 576E100B518D2F1636B028053CB892502FA3BC2D
                 # On sudo_1.6.2p2-2.2.dsc
                 # ERRSIG 7D7C0636C76F38D2 20 3 01 1019775429 4
+                # Those keys are compromised:
+                # http://lists.gnupg.org/pipermail/gnupg-announce/2003q4/000160.html
 
                 # Or missing keys
                 # On grub_0.97-16.1~bpo.1.dsc
