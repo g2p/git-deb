@@ -459,6 +459,8 @@ def cmd_import(args):
             with open_chardet(xdir + '/debian/changelog') as cl:
                 authorship, cl_vers = parse_changelog(cl, skip_versions)
             if not authorship:
+                warn("Couldn't parse changelog for {}"
+                     .format(dsc_finfo.local_path))
                 continue
             assert cl_vers[0] == ver, (cl_vers[0], ver)
             skip_versions.add(ver)
