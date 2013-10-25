@@ -622,6 +622,10 @@ else:
     assert distribution in {'debian', 'ubuntu'}, distribution
     assert archive in {'primary', 'partner'}, archive
 
+if not KEYRINGS:
+    # Run after ?trust= has been parsed
+    bail('No keyrings are available, please run `git deb get-keyrings`')
+
 pkgname = urllib.parse.unquote(url.path, errors='strict')
 pkgname_quoted = urllib.parse.quote(pkgname, safe='')
 
