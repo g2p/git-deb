@@ -43,7 +43,7 @@ In the case of bad/invalid/missing signatures, you may need to skip versions:
     git clone deb::sudo?skip=1.6.2p2-2.2 sudo
     git clone deb::gnupg?skip=1.4.6-1~bpo.1,1.4.6-2.1 gnupg
 
-If a key isn't in the debian keyrings but you do have it in your own keyring,
+If a key isn't in the Debian keyrings but you do have it in your own keyring,
 you may trust it manually:
 
     git clone 'deb::openssl?skip=0.9.8n-1+powerpcspe1;trust=0BE7C53FC1DE67F3' openssl
@@ -52,4 +52,8 @@ you may trust it manually:
 If a key is missing an email identity, you may provide it with another parameter:
 
     ?email='0123456789ABCDEF <email@host>'
+
+# Build status
+
+[![Build Status](https://travis-ci.org/g2p/git-deb.png)](https://travis-ci.org/g2p/git-deb)
 
