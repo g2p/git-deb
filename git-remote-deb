@@ -577,6 +577,7 @@ if True:
     if 'skip' in urlparams:
         skip = set(sum((el.split(',') for el in urlparams['skip']), []))
     if 'trust' in urlparams:
+        os.makedirs(KEYRINGS_PATH[0], exist_ok=True)
         for kid in set(sum((el.split(',') for el in urlparams['trust']), [])):
             with open(os.path.join(KEYRINGS_PATH[0], kid + '.gpg'), 'w') as krf:
                 subprocess.check_call(['gpg', '--export', '--', kid], stdout=krf)
