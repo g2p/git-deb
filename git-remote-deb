@@ -48,6 +48,11 @@ class JSONEncoder(json.JSONEncoder):
 def json_dump(val):
     return json.dumps(val, cls=JSONEncoder)
 
+def silent_call(cmd):
+    try:
+        subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as exn:
+        bail('Command {} failed with output {}'.format(cmd, exn.output))
 
 def ignore(msg):
     pass
@@ -291,10 +296,6 @@ class Snapshots:
                 ver, [fi.local_path for fi in dsc_finfos]))
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
-            # Slow
-            subprocess.check_call(
-                ['dscverify', '--no-sig-check', dsc_path],
-                stdout=subprocess.DEVNULL)
             for kr_name, kr_path in KEYRINGS.items():
                 gi = debian.deb822.GpgInfo.from_file(
                     dsc_path, keyrings=[kr_path])
@@ -458,10 +459,11 @@ def cmd_import(args):
                 continue
             first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
-            subprocess.call(
-                'dpkg-source -x --no-check --'.split()
-                + [dsc_finfo.local_path, xdir],
-                stdout=subprocess.DEVNULL)
+            # Will fail on bad checksums, but not bad signatures
+            # Signatures were checked in grab_srcfiles
+            silent_call(
+                'dpkg-source -x --'.split()
+                + [dsc_finfo.local_path, xdir])
             try:
                 with open_chardet(xdir + '/debian/changelog') as cl:
                     authorship, cl_vers = parse_changelog(cl, skip_versions)

@@ -3,7 +3,7 @@ python:
   - 3.3
 install:
   - lsb_release -a
-  - sudo sh -ec 'apt-get update; apt-get install devscripts'
+  - sudo sh -ec 'apt-get update; apt-get install dpkg-dev'
   - git clone https://github.com/g2p/python-debian.git
   - (cd python-debian; debian/rules setup.py)
   - pip install ./python-debian .
