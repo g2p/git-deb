@@ -399,13 +399,19 @@ def parse_changelog(cl, skip_versions):
 
 def open_chardet(fname):
     fi = open(fname, 'rb')
-    guess = chardet.detect(fi.read(65536))
-    fi.seek(0)
-    if guess['confidence'] < .5 or guess['encoding'] == 'ascii':
-        # Debian standard
-        encoding = 'utf8'
+    sample = fi.read(65536)
+    try:
+        sample.decode()
+    except UnicodeDecodeError:
+        guess = chardet.detect(sample)
+        if guess['confidence'] < .5 or guess['encoding'] == 'ascii':
+            # Debian standard
+            encoding = 'utf8'
+        else:
+            encoding = guess['encoding']
     else:
-        encoding = guess['encoding']
+        encoding = 'utf8'
+    fi.seek(0)
     return io.TextIOWrapper(fi, encoding)
 
 def tagname(ver):
