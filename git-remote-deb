@@ -223,7 +223,8 @@ class Snapshots:
         resp.raise_for_status()
         ts = finfo.first_seen_ts
         try:
-            fd, tn = tempfile.mkstemp(dir=self.debsnap_dir)
+            fd, tn = tempfile.mkstemp(
+                dir=self.debsnap_dir, prefix='git-deb-', suffix='.download')
             for chunk in resp.iter_content(CHUNK_SIZE):
                 os.write(fd, chunk)
             os.utime(fd, times=(ts, ts))
@@ -441,7 +442,7 @@ def cmd_import(args):
     ghosts = set()
     is_root = True
     todo = set()
-    with tempfile.TemporaryDirectory() as tdir:
+    with tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.import') as tdir:
         for ver in reversed(versions_depth):
             try:
                 dsc_finfo = snaps.grab_srcfiles(ver)
