@@ -418,6 +418,12 @@ def tagname(ver):
     #return 'refs/tags/' + urllib.parse.quote(ver, safe='+')
     return 'refs/tags/' + ver.replace(':', '%').replace('~', '_')
 
+def resolve_ref(ver):
+    try:
+        return subprocess.check_output(['git', 'show-ref', '-s', '--', tagname(ver)])
+    except subprocess.CalledProcessError:
+        pass
+
 def gpg_ts(ts):
     if 'T' in ts:
         return isodate.parse_datetime(ts).timestamp()
@@ -442,8 +448,8 @@ def cmd_import(args):
         versions_depth = versions
     versions_depth_set = set(versions_depth)
     authorships = {}
-    first_seen = {}
     predecessors = {}
+    resolved = {}
     successors = collections.defaultdict(list)
     skip_versions = set()
     ghosts = set()
@@ -451,13 +457,17 @@ def cmd_import(args):
     todo = set()
     with tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.import') as tdir:
         for ver in reversed(versions_depth):
+            chash = resolve_ref(ver)
+            if chash is not None:
+                resolved[ver] = chash
+                is_root = False
+                continue
             try:
                 dsc_finfo = snaps.grab_srcfiles(ver)
             except MissingSource:
                 warn('Version {} has no source package'.format(ver))
                 version_set.remove(ver)
                 continue
-            first_seen[ver] = dsc_finfo.first_seen
             xdir = tdir + '/' + ver
             # Will fail on bad checksums, but not bad signatures
             # Signatures were checked in grab_srcfiles
@@ -487,6 +497,8 @@ def cmd_import(args):
                     successors[ver1].append(ver)
                     if depth and ver1 not in versions_depth_set:
                         todo.add(ver)
+                    elif ver1 in resolved:
+                        todo.add(ver)
                     break
                 elif ver1 not in ghosts:
                     ghosts1.add(ver1)
@@ -499,7 +511,10 @@ def cmd_import(args):
                 ghosts.update(ghosts1)
             authorships[ver] = authorship
             is_root = False
-        assert todo
+        if not todo:
+            debug('Already up to date')
+            done_refs.add(remote_ref)
+            return
         done = set()
         while todo:
             ver = todo.pop()

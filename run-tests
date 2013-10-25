@@ -38,11 +38,17 @@ subprocess.check_call(
     'git clone deb::gzrt?trust=E5273D986BE3C423 gzrt.extratrust'.split())
 os.rename('rkr', home + '/.local/share/keyrings/removed-keys.gpg')
 subprocess.check_call('git clone deb::gzrt'.split())
+subprocess.check_call('git clone --depth=1 deb::gzrt gzrt.depth'.split())
+log = subprocess.check_output('git --git-dir=gzrt.depth/.git log --oneline'.split()).splitlines()
+assert len(log) == 1, log
+subprocess.check_call('git --git-dir=gzrt.depth/.git fetch --depth=4'.split())
+log = subprocess.check_output('git --git-dir=gzrt.depth/.git log --all --oneline'.split()).splitlines()
+assert len(log) == 4, log
 
 # Unfortunately these failures are only found in large packages
 must_fail('git clone deb::grub'.split())
 subprocess.check_call('git clone deb::grub?skip=0.97-16.1~bpo.1 grub.skip'.split())
-assert set(os.listdir()) == {'gzrt', 'gzrt.extratrust', 'grub.skip'}, os.listdir()
+assert set(os.listdir()) == {'gzrt', 'gzrt.extratrust', 'gzrt.depth', 'grub.skip'}, os.listdir()
 
 shutil.rmtree(tdir)
 
