@@ -29,12 +29,14 @@ def must_fail(cmd):
         raise subprocess.CalledProcessError(rc, cmd)
 
 
+subprocess.check_call('git deb get-keyrings'.split())
+os.rename(home + '/.local/share/keyrings/removed-keys.gpg', 'rkr')
 must_fail('git clone deb::gzrt'.split())
 subprocess.check_call(
     'gpg --keyserver pgp.mit.edu --recv-keys E5273D986BE3C423'.split())
 subprocess.check_call(
     'git clone deb::gzrt?trust=E5273D986BE3C423 gzrt.extratrust'.split())
-subprocess.check_call('git deb get-keyrings'.split())
+os.rename('rkr', home + '/.local/share/keyrings/removed-keys.gpg')
 subprocess.check_call('git clone deb::gzrt'.split())
 
 # Unfortunately these failures are only found in large packages
