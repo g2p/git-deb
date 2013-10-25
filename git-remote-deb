@@ -62,6 +62,8 @@ def bail(msg):
     printerr(msg)
     sys.exit(1)
 
+class BrokenChangelog(Exception):
+    pass
 
 def warn_missing_keyrings():
     warn('Some keyrings are missing, please run `git deb get-keyrings`')
@@ -392,7 +394,7 @@ def parse_changelog(cl, skip_versions):
             within = False
     if top_entry:
         # There was no valid changelog stanza
-        return None, None
+        raise BrokenChangelog
     return (author, date), versions
 
 def open_chardet(fname):
@@ -456,12 +458,20 @@ def cmd_import(args):
                 'dpkg-source -x --no-check --'.split()
                 + [dsc_finfo.local_path, xdir],
                 stdout=subprocess.DEVNULL)
-            with open_chardet(xdir + '/debian/changelog') as cl:
-                authorship, cl_vers = parse_changelog(cl, skip_versions)
-            if not authorship:
+            try:
+                with open_chardet(xdir + '/debian/changelog') as cl:
+                    authorship, cl_vers = parse_changelog(cl, skip_versions)
+            except BrokenChangelog:
                 warn("Couldn't parse changelog for {}"
                      .format(dsc_finfo.local_path))
                 continue
+            except UnicodeDecodeError:
+                # XXX On puppet-3.2.4/debian/changelog, charade and chardet
+                # both fail in their own ways, finding 8859-2 and Big5
+                # respectively
+                # This error will likely break newer uploads as well; bail
+                bail("Couldn't parse changelog encoding for {}"
+                     .format(dsc_finfo.local_path))
             assert cl_vers[0] == ver, (cl_vers[0], ver)
             skip_versions.add(ver)
             ghosts1 = set()
