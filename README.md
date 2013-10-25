@@ -5,18 +5,22 @@ git-deb downloads the full history of a Debian package into Git.
 
 # Requirements
 
-Python 3.3, Pip, GPG, Git
+Python 3.3, Pip, GPG, Git, dpkg-dev
 
-You may install the following packages first:
+## On Debian and Ubuntu
 
-    sudo aptitude install python3-{chardet,debian,isodate,pip,requests}
+    sudo apt-get install python3-{debian,isodate,pip,requests} dpkg-dev
 
-The python3-debian package is currently required, the version on PyPI
-isn't Python3 compatible.
+## On other distributions
+
+Most of the requirements should be in standard repositories.
+dpkg-dev may or may not be split out from dpkg.
 
 # Installation
 
-    pip3 install --user git-deb
+    pip3 install --user -r https://raw.github.com/g2p/git-deb/master/requirements.txt
+    # Or straight from git:
+    #pip3 install --user -e.
     cp -flt ~/bin ~/.local/bin/git-{remote-,}deb
 
 # Usage

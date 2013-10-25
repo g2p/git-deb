@@ -1,0 +1,3 @@
+git-deb
+--find-links https://github.com/g2p/python-debian/tarball/pip-friendly#egg=python-debian-0.1.22a2
+
