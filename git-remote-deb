@@ -79,8 +79,6 @@ def prepare_keyrings(krs):
                 break
         else:
             missing_keyrings = True
-    if missing_keyrings:
-        warn_missing_keyrings()
 
 KEYRINGS = collections.OrderedDict(prepare_keyrings([
     ('debian', 'debian-keyring.gpg'),
@@ -627,6 +625,8 @@ else:
 if not KEYRINGS:
     # Run after ?trust= has been parsed
     bail('No keyrings are available, please run `git deb get-keyrings`')
+elif missing_keyrings:
+    warn_missing_keyrings()
 
 pkgname = urllib.parse.unquote(url.path, errors='strict')
 pkgname_quoted = urllib.parse.quote(pkgname, safe='')
