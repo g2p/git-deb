@@ -2,8 +2,11 @@ language: python
 python:
   - 3.3
 install:
-  - sudo apt-get update
-  - sudo apt-get install python3-{debian,isodate,requests}
+  - lsb_release -a
+  - sudo sh -ec 'apt-get update; apt-get install devscripts'
+  - git clone https://github.com/g2p/python-debian.git
+  - (cd python-debian; debian/rules setup.py)
+  - pip install ./python-debian .
 script:
   - time ./run-tests
 
