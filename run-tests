@@ -1,0 +1,46 @@
+#!/usr/bin/python3.3
+"""
+Runs in a clean environment; no cache or keyrings.
+
+A caching proxy will help with performance
+with multiple test runs on the same machine:
+
+    sudo aptitude install polipo
+    http_proxy=http://localhost:8123 ./run-tests
+"""
+
+import os
+import shutil
+import subprocess
+import tempfile
+
+
+# No context manager, tdir should stay in case of errors
+tdir = tempfile.mkdtemp(prefix='git-deb-', suffix='.tests')
+os.environ['HOME'] = home = tdir + '/home'
+os.mkdir(home)
+cwd = tdir + '/cwd'
+os.mkdir(cwd)
+os.chdir(cwd)
+
+def must_fail(cmd):
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        raise subprocess.CalledProcessError(rc, cmd)
+
+
+must_fail('git clone deb::gzrt'.split())
+subprocess.check_call(
+    'gpg --keyserver pgp.mit.edu --recv-keys E5273D986BE3C423'.split())
+subprocess.check_call(
+    'git clone deb::gzrt?trust=E5273D986BE3C423 gzrt.extratrust'.split())
+subprocess.check_call('git deb get-keyrings'.split())
+subprocess.check_call('git clone deb::gzrt'.split())
+
+# Unfortunately these failures are only found in large packages
+must_fail('git clone deb::grub'.split())
+subprocess.check_call('git clone deb::grub?skip=0.97-16.1~bpo.1 grub.skip'.split())
+assert set(os.listdir()) == {'gzrt', 'gzrt.extratrust', 'grub.skip'}, os.listdir()
+
+shutil.rmtree(tdir)
+
