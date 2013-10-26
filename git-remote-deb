@@ -526,7 +526,10 @@ def cmd_import(args):
             xdir = tdir + '/' + ver
             os.environ['GIT_WORK_TREE'] = xdir
             os.environ['GIT_INDEX_FILE'] = xdir + '.index'
-            subprocess.check_call('git add -A'.split())
+            try:
+                subprocess.check_call('git add -A'.split())
+            except subprocess.CalledProcessError:
+                bail('Error adding from {}'.format(dsc_finfo.local_path))
             tree_hash = subprocess.check_output(
                 'git write-tree'.split()).decode().rstrip()
 
