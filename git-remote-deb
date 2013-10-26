@@ -38,6 +38,10 @@ SIG_KID_RE = re.compile(r'^[0-9A-F]{16}$')
 # I've no idea
 CHUNK_SIZE = 65536
 
+# Yay VT100
+LINE_START = '\r'
+CLEAR_END_OF_LINE = '\x1b[K'
+
 
 class JSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -57,8 +61,8 @@ def silent_call(cmd):
 def ignore(msg):
     pass
 
-def printerr(msg):
-    print(msg, file=sys.stderr)
+def printerr(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 warn = printerr
 debug = ignore
@@ -66,6 +70,13 @@ debug = ignore
 def bail(msg):
     printerr(msg)
     sys.exit(1)
+
+if sys.stderr.isatty():
+    def progress(msg):
+        printerr(CLEAR_END_OF_LINE + msg, end=LINE_START)
+else:
+    progress = ignore
+
 
 class BrokenChangelog(Exception):
     pass
@@ -462,6 +473,7 @@ def cmd_import(args):
                 resolved[ver] = chash
                 is_root = False
                 continue
+            progress('Downloading {}'.format(ver))
             try:
                 dsc_finfo = snaps.grab_srcfiles(ver)
             except MissingSource:
@@ -521,6 +533,7 @@ def cmd_import(args):
             if ver in done:
                 bail('Changelog loop detected at {} {}, giving up'
                      .format(ver, predecessors[ver]))
+            progress('Importing {}'.format(ver))
             todo.update(successors[ver])
             dsc_finfo = snaps.grab_srcfiles(ver)
             xdir = tdir + '/' + ver
