@@ -27,7 +27,11 @@ import urllib.parse
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
-KEYRINGS_PATH = (os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyrings')
+# Don't write to ~/.local/share/keyrings,
+# it's where gnome-keyrings stores secrets.
+KEYRINGS_PATH = (
+    os.path.expanduser('~/.local/share/public-keyrings'),
+    os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyrings')
 
 # very relaxed, we'll be dealing with historical data
 VERSION_LINE_RE = re.compile(r'^[a-z0-9][a-z0-9+.-]*\s+\(([^ ]+)\)')

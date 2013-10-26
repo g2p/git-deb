@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-KEYRINGS_DIR = os.path.expanduser('~/.local/share/keyrings')
+KEYRINGS_DIR = os.path.expanduser('~/.local/share/public-keyrings')
 
 def cmd_get_keyrings(args):
     os.makedirs(KEYRINGS_DIR, exist_ok=True)
