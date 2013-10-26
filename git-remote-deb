@@ -490,7 +490,7 @@ def cmd_import(args):
                      .format(dsc_finfo.local_path))
             assert cl_vers[0] == ver, (cl_vers[0], ver)
             skip_versions.add(ver)
-            ghosts1 = set()
+            ver_ghosts = set()
             for ver1 in cl_vers[1:]:
                 if ver1 in version_set:
                     predecessors[ver] = ver1
@@ -500,15 +500,15 @@ def cmd_import(args):
                     elif ver1 in resolved:
                         todo.add(ver)
                     break
-                elif ver1 not in ghosts:
-                    ghosts1.add(ver1)
+                elif ver1 not in ghosts and ver1 not in skip:
+                    ver_ghosts.add(ver1)
             else:
                 todo.add(ver)
                 if not is_root:
                     warn('Version {} has no predecessor'.format(ver))
-            if ghosts1:
-                warn('Found ghost versions {}'.format(ghosts1))
-                ghosts.update(ghosts1)
+            if ver_ghosts:
+                warn('Found ghost versions {}'.format(ver_ghosts))
+                ghosts.update(ver_ghosts)
             authorships[ver] = authorship
             is_root = False
         if not todo:
