@@ -86,29 +86,31 @@ else:
 class BrokenChangelog(Exception):
     pass
 
-def warn_missing_keyrings():
-    warn('Some keyrings are missing, please run `git deb get-keyrings`')
 
-def prepare_keyrings(krs):
-    global missing_keyrings
-    missing_keyrings = False
-    for sname, fname in krs:
-        for sp in KEYRINGS_PATH:
-            kr_path = os.path.join(sp, fname)
-            if os.path.exists(kr_path):
-                yield sname, kr_path
-                break
-        else:
-            missing_keyrings = True
+class Keyrings(collections.OrderedDict):
+    def __init__(self):
+        super().__init__()
+        self.missing = False
+        for sname, fname in self._init_list:
+            for sp in KEYRINGS_PATH:
+                kr_path = os.path.join(sp, fname)
+                if os.path.exists(kr_path):
+                    self[sname] = kr_path
+                    break
+            else:
+                self.missing = True
 
-KEYRINGS = collections.OrderedDict(prepare_keyrings([
-    ('debian', 'debian-keyring.gpg'),
-    ('debian-maintainers', 'debian-maintainers.gpg'),
-    ('debian-emeritus', 'emeritus-keyring.gpg'),
-    ('debian-emeritus-pgp', 'emeritus-keyring.pgp'),
-    ('debian-removed', 'removed-keys.gpg'),
-    ('debian-removed-pgp', 'removed-keys.pgp'),
-]))
+    def warn_missing(self):
+        warn('Some keyrings are missing, please run `git deb get-keyrings`')
+
+    _init_list = (
+        ('debian', 'debian-keyring.gpg'),
+        ('debian-maintainers', 'debian-maintainers.gpg'),
+        ('debian-emeritus', 'emeritus-keyring.gpg'),
+        ('debian-emeritus-pgp', 'emeritus-keyring.pgp'),
+        ('debian-removed', 'removed-keys.gpg'),
+        ('debian-removed-pgp', 'removed-keys.pgp'),
+    )
 
 
 if False:
@@ -312,7 +314,7 @@ class Snapshots:
                 ver, [fi.local_path for fi in dsc_finfos]))
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
-            for kr_name, kr_path in KEYRINGS.items():
+            for kr_name, kr_path in keyrings.items():
                 gi = debian.deb822.GpgInfo.from_file(
                     dsc_path, keyrings=[kr_path])
                 if not gi.valid():
@@ -334,8 +336,8 @@ class Snapshots:
                 # Or missing keys
                 # On grub_0.97-16.1~bpo.1.dsc
                 # ERRSIG 6908386EC98FE2A1 17 2 01 1160038149 9
-                if 'NO_PUBKEY' in gi and missing_keyrings:
-                    warn_missing_keyrings()
+                if 'NO_PUBKEY' in gi and keyrings.missing:
+                    keyrings.warn_missing()
                 bail('No valid signature on {} {}'.format(dsc_path, gi))
         return min(dsc_finfos, key=upload_precedence)
 
@@ -446,6 +448,8 @@ def gpg_ts(ts):
     else:
         return int(ts)
 
+
+done_refs = set()
 def cmd_import(args):
     remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
     assert args.refname in {remote_ref, 'HEAD'}, (args.refname, remote_ref)
@@ -602,12 +606,9 @@ def cmd_import(args):
     print('from ' + tagname(versions[0]))
     done_refs.add(remote_ref)
 
-snaps = Snapshots()
+
 email_fallbacks = {}
 skip = set()
-done_refs = set()
-
-
 def parse_url_debsnap(url):
     global email_fallbacks, skip
     # use snapshot.debian.org
@@ -630,7 +631,7 @@ def parse_url_debsnap(url):
         for kid in set(sum((el.split(',') for el in urlparams['trust']), [])):
             with open(os.path.join(tdir, 'k', kid + '.gpg'), 'w') as krf:
                 subprocess.check_call(['gpg', '--export', '--', kid], stdout=krf)
-            KEYRINGS['local:' + kid] = krf.name
+            keyrings['local:' + kid] = krf.name
     if 'email' in urlparams:
         for emap in set(sum((el.split(',') for el in urlparams['email']), [])):
             kid, eml = IDENT_RE.match(emap).groups()
@@ -696,7 +697,7 @@ def protocol_main():
         sys.stdout.flush()
 
 def main():
-    global pkgname_quoted, remote_quoted
+    global pkgname_quoted, remote_quoted, keyrings, snaps
     parser0 = argparse.ArgumentParser()
     parser0.add_argument('remote')
     parser0.add_argument('url')
@@ -706,21 +707,25 @@ def main():
     assert url.scheme == 'deb'
     assert not url.netloc
     assert not url.fragment
+
+    keyrings = Keyrings()
     parse_url_debsnap(url)
 
     # Run after ?trust= has been parsed
-    if not KEYRINGS:
+    if not keyrings:
         bail('No keyrings are available, please run `git deb get-keyrings`')
-    elif missing_keyrings:
-        warn_missing_keyrings()
+    elif keyrings.missing:
+        keyrings.warn_missing()
 
     pkgname = urllib.parse.unquote(url.path, errors='strict')
     pkgname_quoted = urllib.parse.quote(pkgname, safe='')
     assert pkgname == pkgname_quoted, (pkgname, pkgname_quoted)
 
+    snaps = Snapshots()
     protocol_main()
 
 with contextlib.ExitStack() as estack:
-    tdir = estack.enter_context(tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.tmp'))
+    tdir = estack.enter_context(
+        tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.tmp'))
     main()
 
