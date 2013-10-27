@@ -411,8 +411,8 @@ def cmd_option(args):
     if args.name == 'depth':
         depth = int(args.value)
         if depth <= 0:
-            # transport.c doesn't really check,
-            # depth=0 might mean infinity in git internals
+            # transport.c doesn't really check the range so do it
+            # here.  Git infinity == 2**31-1 (it's a C thing)
             msg = 'Depth must be > 0'
             print('error ' + msg)
             # Even though the protocol has error reporting,
