@@ -214,6 +214,7 @@ class Snapshots:
         self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
         os.makedirs(self.debsnap_dir + 'by-hash', exist_ok=True)
         os.makedirs(self.debsnap_dir + 'archive', exist_ok=True)
+        os.makedirs(self.debsnap_dir + 'json', exist_ok=True)
 
         self.http = sess = requests.Session()
         # May not work out of the box
@@ -318,7 +319,7 @@ class Snapshots:
         # may not match dates in case of backports and mistakes
         vinfo = self._api_request('mr/package/{}/'.format(pkgname_quoted),
             cache_control=MaxAge(
-                self.debsnap_dir + pkgname_quoted + '_versions.json', 600))
+                self.debsnap_dir + 'json/' + pkgname_quoted + '_versions.json', 600))
         return [el.version for el in vinfo.result]
 
     def grab_srcfiles(self, ver):
@@ -328,7 +329,7 @@ class Snapshots:
                 'mr/package/{}/{}/srcfiles?fileinfo=1'.format(pkgname_quoted, ver),
                 headers={'max-stale': '8640000'},
                 cache_control=CacheForever(
-                    self.debsnap_dir + pkgname_quoted
+                    self.debsnap_dir + 'json/' + pkgname_quoted
                     + '_' + ver + '.srcfiles.json'))
         except requests.HTTPError as err:
             if err.response.status_code == 404:
