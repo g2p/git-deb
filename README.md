@@ -1,29 +1,20 @@
+**git-deb** downloads the full history of a Debian package into Git.
 
-# git-deb
+## Requirements
 
-git-deb downloads the full history of a Debian package into Git.
+Python 3.3, Pip, GPG, Git, Dpkg (specifically the dpkg-dev subpackage)
 
-# Requirements
-
-Python 3.3, Pip, GPG, Git, dpkg-dev
-
-## On Debian and Ubuntu
+#### On Debian and Ubuntu
 
     sudo apt-get install python3-{debian,isodate,pip,requests} dpkg-dev
 
-## On other distributions
-
-Most of the requirements should be in standard repositories.
-dpkg-dev may or may not be split out from dpkg.
-
-# Installation
+## Installation
 
     pip3 install --user -r https://raw.github.com/g2p/git-deb/master/requirements.txt
-    # Or straight from git:
-    #pip3 install --user -e.
-    cp -flt ~/bin ~/.local/bin/git-{remote-,}deb
+    #pip3 install --user -e.  # If you prefer running straight from git
+    cp -fst ~/bin ~/.local/bin/git-{remote-,}deb  # Not needed if ~/.local/bin is in the PATH
 
-# Usage
+## Usage
 
     git clone deb::pkgname
 
@@ -40,7 +31,7 @@ signatures that can't be verified with current Debian keyrings.
 will download historical keyrings (using Apt).
 Commits using those keys will be annotated.
 
-# Fixes
+## Fixes
 
 In the case of bad/invalid/missing signatures, you may need to skip versions:
 
@@ -50,14 +41,13 @@ In the case of bad/invalid/missing signatures, you may need to skip versions:
 If a key isn't in the Debian keyrings but you do have it in your own keyring,
 you may trust it manually:
 
-    git clone 'deb::openssl?skip=0.9.8n-1+powerpcspe1;trust=0BE7C53FC1DE67F3' openssl
     git clone 'deb::gnupg?skip=1.4.6-2.1&trust=6908386EC98FE2A1' gnupg
 
 If a key is missing an email identity, you may provide it with another parameter:
 
     ?email='0123456789ABCDEF <email@host>'
 
-# Build status
+## Build status
 
 [![Build Status](https://travis-ci.org/g2p/git-deb.png)](https://travis-ci.org/g2p/git-deb)
 
