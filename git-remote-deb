@@ -416,18 +416,21 @@ def parse_changelog(cl, skip_versions):
 
 def open_chardet(fname):
     fi = open(fname, 'rb')
-    sample = fi.read(65536)
+    tw = io.TextIOWrapper(fi, 'utf8')
     try:
-        sample.decode()
+        tw.read(65536)
     except UnicodeDecodeError:
-        guess = chardet.detect(sample)
-        if guess['confidence'] < .5 or guess['encoding'] == 'ascii':
-            # Debian standard
-            encoding = 'utf8'
-        else:
-            encoding = guess['encoding']
+        tw.detach()
+        del tw
+        fi.seek(0)
     else:
-        encoding = 'utf8'
+        tw.seek(0)
+        return tw
+    # Now we only know it's not utf8
+    guess = chardet.detect(fi.read(65536))
+    if guess['confidence'] < .5:
+        warn('Low-confidence guess on non-utf8 file {}'.format(fname))
+    encoding = guess['encoding']
     fi.seek(0)
     return io.TextIOWrapper(fi, encoding)
 
