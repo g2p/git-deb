@@ -393,7 +393,7 @@ class Snapshots:
                 try:
                     finfo.uid = clean_uid(uid, kid)
                 except ValueError:
-                    bail('Bad uid {} on {}'.format(uid, dsc_path))
+                    bail('Bad uid {} for {} on {}'.format(uid, kid, dsc_path))
                 finfo.kid = kid
                 finfo.sigtype = sigtype
                 break
