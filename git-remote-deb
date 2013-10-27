@@ -244,7 +244,7 @@ class Snapshots:
             pass
         else:
             if st.st_size == size:
-                debug('new cache hit ' + old_cache_path)
+                #debug('new cache hit ' + old_cache_path)
                 return ref_path
             os.unlink(ref_path)
 
@@ -255,7 +255,7 @@ class Snapshots:
         else:
             st = os.fstat(fi.fileno())
             if st.st_size == size and file_sha1(fi) == fhash:
-                debug('old cache hit' + old_cache_path)
+                #debug('old cache hit' + old_cache_path)
                 os.rename(old_cache_path, ref_path)
                 return ref_path
             os.unlink(old_cache_path)
@@ -327,6 +327,7 @@ class Snapshots:
             raise
 
         dsc_finfos = set()
+        dsc_finfos_by_hash = {}
         for fhash, finfos in vars(srcinfo.fileinfo).items():
             assert finfos
             if len(finfos) > 1:
@@ -338,13 +339,12 @@ class Snapshots:
             if finfos[0].name.endswith('.dsc'):
                 # Curl has multiple dscs for the same upload.  Horrors.
                 dsc_finfos.update(finfos)
+                dsc_finfos_by_hash[fhash] = finfos
         if not dsc_finfos:
             warn('No signature file for {}'.format(ver))
             # http://snapshot.debian.org/package/sudo/1.3.1pl4-1/
             raise MissingSource(ver)
-        if len(dsc_finfos) > 1:
-            warn('Multiple dscs for version {} {}'.format(
-                ver, [fi.local_path for fi in dsc_finfos]))
+        dsc_finfos_by_cleartext = collections.defaultdict(list)
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
             for kr_name, kr_path in keyrings.items():
@@ -372,6 +372,30 @@ class Snapshots:
                 if 'NO_PUBKEY' in gi and keyrings.missing:
                     keyrings.warn_missing()
                 bail('No valid signature on {} {}'.format(dsc_path, gi))
+            for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
+                try:
+                    kid, uid, *extra = gi[sigtype]
+                    break
+                except KeyError:
+                    continue
+            else:
+                bail('Not a good signature {}'.format(finfo.gi))
+            # Getting (only) the cleartext is way too tricky,
+            # hopefully this guarantees there is a single signature
+            # and we're not getting junk outside the signed area
+            cleartext = subprocess.check_output(
+                ['gpg', '--decrypt', '--keyring', kr_path, '--', dsc_path],
+                stderr=subprocess.DEVNULL)
+            dsc_finfos_by_cleartext[cleartext].append(finfo)
+            finfo.cleartext = cleartext
+        if len(dsc_finfos_by_cleartext) > 1:
+            # http://snapshot.debian.org/package/file/4.17-5etch2/
+            bail('Multiple dsc cleartexts for version {} {}'.format(
+                ver, [fi.local_path for fi in dsc_finfos]))
+        elif len(dsc_finfos_by_hash) > 1:
+            warn('Multiple dscs for version {} {}'.format(
+                ver, [fi.local_path for fi in dsc_finfos]))
+        #return dsc_finfos_by_cleartext
         return min(dsc_finfos, key=upload_precedence)
 
 
