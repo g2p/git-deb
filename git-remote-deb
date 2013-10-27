@@ -528,7 +528,7 @@ def cmd_import(args):
             if not is_root:
                 warn('Version {} has no predecessor'.format(ver))
         if ver_ghosts:
-            warn('Found ghost versions {}'.format(ver_ghosts))
+            warn('Found ghost versions {}'.format(' '.join(ver_ghosts)))
             ghosts.update(ver_ghosts)
         authorships[ver] = authorship
         is_root = False
