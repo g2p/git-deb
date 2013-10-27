@@ -350,6 +350,7 @@ class Snapshots:
                 assert len(set((fi.size) for fi in finfos)) == 1, finfos
                 # same extension?
                 assert len(set((fi.name.split('.')[-1]) for fi in finfos)) == 1, finfos
+            assert '/' not in fhash
             self._get_file(fhash, finfos)
             if finfos[0].name.endswith('.dsc'):
                 # Curl has multiple dscs for the same upload.  Horrors.
