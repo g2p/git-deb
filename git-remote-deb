@@ -530,6 +530,7 @@ def cmd_import(args):
     authorships = {}
     predecessors = {}
     resolved = {}
+    dscs_finfo_by_ver = {}
     successors = collections.defaultdict(list)
     skip_versions = set()
     ghosts = set()
@@ -545,6 +546,7 @@ def cmd_import(args):
         progress('Downloading {}'.format(ver))
         try:
             dsc_finfo = snaps.grab_srcfiles(ver)
+            dscs_finfo_by_ver[ver] = dsc_finfo
         except MissingSource:
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
@@ -604,7 +606,7 @@ def cmd_import(args):
                  .format(ver, predecessors[ver]))
         progress('Importing {}'.format(ver))
         todo.update(successors[ver])
-        dsc_finfo = snaps.grab_srcfiles(ver)
+        dsc_finfo = dscs_finfo_by_ver[ver]
         xdir = tdir + '/x/' + ver
         os.environ['GIT_WORK_TREE'] = xdir
         os.environ['GIT_INDEX_FILE'] = xdir + '.index'
