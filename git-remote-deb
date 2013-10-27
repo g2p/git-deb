@@ -306,6 +306,9 @@ class Snapshots:
             dpath = self.debsnap_dir + 'archive/' + finfo.archive_name + finfo.path
             assert os.path.relpath(dpath, self.debsnap_dir).startswith('archive/')
             os.makedirs(dpath, exist_ok=True)
+            if not finfo.name.startswith(pkgname_quoted + '_'):
+                # Empty gzip files tend to go by many names
+                continue
             local_path = dpath + '/' + finfo.name
             try:
                 os.link(ref_path, local_path)
