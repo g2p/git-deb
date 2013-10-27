@@ -405,7 +405,6 @@ class Snapshots:
                 ['gpg', '--decrypt', '--keyring', kr_path, '--', dsc_path],
                 stderr=subprocess.DEVNULL)
             dsc_finfos_by_cleartext[cleartext].append(finfo)
-            finfo.cleartext = cleartext
         if len(dsc_finfos_by_cleartext) > 1:
             # http://snapshot.debian.org/package/file/4.17-5etch2/
             bail('Multiple dsc cleartexts for version {} {}'.format(
@@ -414,7 +413,7 @@ class Snapshots:
             warn('Multiple dscs for version {} {}'.format(
                 ver, [fi.local_path for fi in dsc_finfos]))
         #return dsc_finfos_by_cleartext
-        return min(dsc_finfos, key=upload_precedence)
+        return min(dsc_finfos, key=upload_precedence), cleartext
 
 
 def cmd_capabilities(args):
@@ -527,6 +526,15 @@ def gpg_ts(ts):
         return int(ts)
 
 
+class SrcPkg:
+    prev_ver = None
+    authorship = None
+    def __init__(self, version, dsc_finfo, cleartext):
+        self.version = version
+        self.dsc_finfo = dsc_finfo
+        self.dsc = debian.deb822.Dsc(cleartext)
+
+
 done_refs = set()
 def cmd_import(args):
     remote_ref = 'refs/heads/{}'.format(pkgname_quoted)
@@ -545,10 +553,8 @@ def cmd_import(args):
     else:
         versions_depth = versions
     versions_depth_set = set(versions_depth)
-    authorships = {}
-    predecessors = {}
     resolved = {}
-    dscs_finfo_by_ver = {}
+    pkg_by_ver = {}
     successors = collections.defaultdict(list)
     skip_versions = set()
     ghosts = set()
@@ -563,8 +569,8 @@ def cmd_import(args):
             continue
         progress('Downloading {}'.format(ver))
         try:
-            dsc_finfo = snaps.grab_srcfiles(ver)
-            dscs_finfo_by_ver[ver] = dsc_finfo
+            dsc_finfo, cleartext = snaps.grab_srcfiles(ver)
+            pkg = pkg_by_ver[ver] = SrcPkg(ver, dsc_finfo, cleartext)
         except MissingSource:
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
@@ -577,7 +583,7 @@ def cmd_import(args):
             + [dsc_finfo.local_path, xdir])
         try:
             with open_chardet(xdir + '/debian/changelog') as cl:
-                authorship, cl_vers = parse_changelog(cl, skip_versions)
+                pkg.authorship, cl_vers = parse_changelog(cl, skip_versions)
         except BrokenChangelog:
             warn("Couldn't parse changelog for {}"
                  .format(dsc_finfo.local_path))
@@ -594,7 +600,7 @@ def cmd_import(args):
         ver_ghosts = set()
         for ver1 in cl_vers[1:]:
             if ver1 in version_set:
-                predecessors[ver] = ver1
+                pkg.prev_ver = ver1
                 successors[ver1].append(ver)
                 if depth and ver1 not in versions_depth_set:
                     todo.add(ver)
@@ -610,7 +616,6 @@ def cmd_import(args):
         if ver_ghosts:
             warn('Found ghost versions {}'.format(' '.join(ver_ghosts)))
             ghosts.update(ver_ghosts)
-        authorships[ver] = authorship
         is_root = False
     if not todo:
         debug('Already up to date')
@@ -621,10 +626,11 @@ def cmd_import(args):
         ver = todo.pop()
         if ver in done:
             bail('Changelog loop detected at {} {}, giving up'
-                 .format(ver, predecessors[ver]))
+                 .format(ver, pkg.prev_ver))
         progress('Importing {}'.format(ver))
         todo.update(successors[ver])
-        dsc_finfo = dscs_finfo_by_ver[ver]
+        pkg = pkg_by_ver[ver]
+        dsc_finfo = pkg.dsc_finfo
         xdir = tdir + '/x/' + ver
         os.environ['GIT_WORK_TREE'] = xdir
         os.environ['GIT_INDEX_FILE'] = xdir + '.index'
@@ -641,8 +647,8 @@ def cmd_import(args):
 
         print('commit ' + import_ref)
         print('mark :1')
-        if ver in authorships:
-            author, date = authorships[ver]
+        if pkg.authorship:
+            author, date = pkg.authorship
             print(
                 'author {} {} +0000'.format(author, int(date.timestamp())))
             print('committer {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
@@ -654,10 +660,9 @@ def cmd_import(args):
             msg += ' ({kr_name}/{kid} {sigtype})'.format(**vars(dsc_finfo))
         print('data {}'.format(len(msg.encode())))
         print(msg)
-        if ver in predecessors:
-            pred = predecessors[ver]
-            if not depth or pred in versions_depth_set:
-                print('from ' + tagname(predecessors[ver]))
+        if pkg.prev_ver is not None:
+            if not depth or pkg.prev_ver in versions_depth_set:
+                print('from ' + tagname(pkg.prev_ver))
         print('deleteall')
         print('M 040000 {} '.format(tree_hash))
         print()
