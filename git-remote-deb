@@ -196,6 +196,17 @@ def file_sha1(fi):
         sha1.update(chunk)
     return sha1.hexdigest()
 
+def clean_uid(uid, kid):
+    if IDENT_RE.match(uid):
+        return uid
+    elif '@' in uid:
+        return '<{}>'.format(uid)
+    elif kid in email_fallbacks:
+        return uid + ' <{}>'.format(email_fallbacks[kid])
+    else:
+        raise ValueError(uid)
+
+
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
@@ -372,12 +383,19 @@ class Snapshots:
                 if 'NO_PUBKEY' in gi and keyrings.missing:
                     keyrings.warn_missing()
                 bail('No valid signature on {} {}'.format(dsc_path, gi))
+            # See /usr/share/doc/gnupg/DETAILS.gz
             for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
                 try:
                     kid, uid, *extra = gi[sigtype]
-                    break
                 except KeyError:
                     continue
+                try:
+                    finfo.uid = clean_uid(uid, kid)
+                except ValueError:
+                    bail('Bad uid {} on {}'.format(uid, dsc_path))
+                finfo.kid = kid
+                finfo.sigtype = sigtype
+                break
             else:
                 bail('Not a good signature {}'.format(finfo.gi))
             # Getting (only) the cleartext is way too tricky,
@@ -617,23 +635,6 @@ def cmd_import(args):
         tree_hash = subprocess.check_output(
             'git write-tree'.split()).decode().rstrip()
 
-        # See /usr/share/doc/gnupg/DETAILS.gz
-        for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
-            try:
-                kid, uid, *extra = dsc_finfo.gi[sigtype]
-                if not IDENT_RE.match(uid):
-                    if '@' in uid:
-                        uid = '<{}>'.format(uid)
-                    elif kid in email_fallbacks:
-                        uid += ' <{}>'.format(email_fallbacks[kid])
-                    else:
-                        bail('Bad uid {} on {}'
-                             .format(uid, json_dump(dsc_finfo)))
-                break
-            except KeyError:
-                pass
-        else:
-            bail('Not a good signature {}'.format(dsc_finfo.gi))
         (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
          hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
         #sigid, date1, ts1, *extra = gi['SIG_ID']
@@ -644,13 +645,13 @@ def cmd_import(args):
             author, date = authorships[ver]
             print(
                 'author {} {} +0000'.format(author, int(date.timestamp())))
-            print('committer {} {} +0000'.format(uid, gpg_ts(sig_ts)))
+            print('committer {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
         else:
             print(
                 'committer <malformed-changelog> 0 +0000')
         msg = 'Import {}'.format(ver)
-        if (dsc_finfo.kr_name, sigtype) != ('debian', 'GOODSIG'):
-            msg += ' ({}/{} {})'.format(dsc_finfo.kr_name, kid, sigtype)
+        if (dsc_finfo.kr_name, dsc_finfo.sigtype) != ('debian', 'GOODSIG'):
+            msg += ' ({kr_name}/{kid} {sigtype})'.format(**vars(dsc_finfo))
         print('data {}'.format(len(msg.encode())))
         print(msg)
         if ver in predecessors:
