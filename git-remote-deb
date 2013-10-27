@@ -13,6 +13,7 @@ import collections
 import contextlib
 import debian.deb822 # pypi:python-debian
 import email.utils
+import hashlib
 import io
 import isodate # pypi
 import json
@@ -63,7 +64,7 @@ def silent_call(cmd):
     except subprocess.CalledProcessError as exn:
         bail('Command {} failed with output {}'.format(cmd, exn.output))
 
-def ignore(msg):
+def ignore(*args):
     pass
 
 def printerr(*args, **kwargs):
@@ -186,13 +187,22 @@ class MissingSource(Exception):
 def upload_precedence(fi):
     return fi.first_seen, fi.name, fi.archive_name, fi.path
 
+def file_sha1(fi):
+    sha1 = hashlib.sha1()
+    while True:
+        chunk = fi.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        sha1.update(chunk)
+    return sha1.hexdigest()
 
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
         # s.d.o/file/sha1 is good for 10 days
         self.debsnap_dir = os.path.expanduser('~/.cache/debsnap/')
-        os.makedirs(self.debsnap_dir, exist_ok=True)
+        os.makedirs(self.debsnap_dir + 'by-hash', exist_ok=True)
+        os.makedirs(self.debsnap_dir + 'archive', exist_ok=True)
 
         self.http = sess = requests.Session()
         # May not work out of the box
@@ -225,41 +235,67 @@ class Snapshots:
         return resp.json(
             object_hook=lambda args: types.SimpleNamespace(**args))
 
-    def _get_file(self, fhash, finfo, extra_names):
-        # ignoring archive_name and path
-        name = finfo.name
-        size = finfo.size
-        path = self.debsnap_dir + name
-        #debug(name, size, finfo, extra_names)
+    def _get_by_hash(self, fhash, size, old_cache_path):
+        # by-hash is actually by-sha1 atm
+        ref_path = self.debsnap_dir + 'by-hash/' + fhash
         try:
-            st = os.stat(path)
+            st = os.stat(ref_path)
         except FileNotFoundError:
             pass
         else:
-            # Check for partial downloads, anything else will
-            # be caught by dscverify
             if st.st_size == size:
-                #debug('skipping {}'.format(name))
-                return path
-            os.unlink(path)
+                debug('new cache hit ' + old_cache_path)
+                return ref_path
+            os.unlink(ref_path)
+
+        try:
+            fi = open(old_cache_path, 'rb')
+        except FileNotFoundError:
+            pass
+        else:
+            st = os.fstat(fi.fileno())
+            if st.st_size == size and file_sha1(fi) == fhash:
+                debug('old cache hit' + old_cache_path)
+                os.rename(old_cache_path, ref_path)
+                return ref_path
+            os.unlink(old_cache_path)
+
+        # this api only accepts sha1, though dscs keep other hashes
         resp = self.http.get(SNAPSHOTS_BASE + 'file/' + fhash, stream=True)
         resp.raise_for_status()
-        ts = finfo.first_seen_ts
-        try:
-            fd, tn = tempfile.mkstemp(
-                dir=self.debsnap_dir, prefix='git-deb-', suffix='.download')
+        sha1 = hashlib.sha1()
+
+        with tempfile.NamedTemporaryFile(
+            dir=self.debsnap_dir, prefix='git-deb-', suffix='.download'
+        ) as tf:
             for chunk in resp.iter_content(CHUNK_SIZE):
-                os.write(fd, chunk)
-            os.utime(fd, times=(ts, ts))
-            os.rename(tn, path)
-            for ename in extra_names:
-                os.link(path, self.debsnap_dir + ename)
-        except:
-            os.unlink(tn)
-            raise
-        finally:
-            os.close(fd)
-        return path
+                sha1.update(chunk)
+                tf.write(chunk)
+            tf.flush()
+            assert tf.tell() == size
+            assert sha1.hexdigest() == fhash
+            # Don't fsync, we'll use size checks
+            os.rename(tf.name, ref_path)
+            tf.delete = False
+        return ref_path
+
+    def _get_file(self, fhash, finfos):
+        # ignoring archive_name and path
+        old_cache_finfo = min(finfos, key=upload_precedence)
+        old_cache_path = self.debsnap_dir + old_cache_finfo.name
+        size = old_cache_finfo.size
+        #debug(old_cache_path, size, finfos)
+        ref_path = self._get_by_hash(fhash, size, old_cache_path)
+        for finfo in finfos:
+            # XXX path traversal
+            dpath = self.debsnap_dir + 'archive/' + finfo.archive_name + finfo.path
+            os.makedirs(dpath, exist_ok=True)
+            local_path = dpath + '/' + finfo.name
+            try:
+                os.link(ref_path, local_path)
+            except FileExistsError:
+                assert os.path.samefile(ref_path, local_path), (ref_path, local_path)
+        return local_path
 
     def get_versions(self):
         # new to old, with version sort
@@ -285,8 +321,6 @@ class Snapshots:
                 raise MissingSource(ver)
             raise
 
-        # sha1
-        #hashes = [el.hash for el in srcinfo.result]
         dsc_finfos = set()
         for fhash, finfos in vars(srcinfo.fileinfo).items():
             assert finfos
@@ -297,10 +331,7 @@ class Snapshots:
             finfo = min(finfos, key=upload_precedence)
             first_seen_dt = isodate.parse_datetime(finfo.first_seen)
             finfo.first_seen_ts = first_seen_dt.timestamp()
-            # Some orig.tar.gz have multiple names :(
-            extra_names = set(fi.name for fi in finfos if fi.name != finfo.name)
-            # this api only accepts sha1, though dscs keep other hashes
-            local_path = self._get_file(fhash, finfo, extra_names)
+            local_path = self._get_file(fhash, finfos)
             if finfo.name.endswith('.dsc'):
                 finfo.local_path = local_path
                 # Curl has multiple dscs for the same upload.  Horrors.
