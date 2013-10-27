@@ -496,7 +496,7 @@ def cmd_import(args):
         # Will fail on bad checksums, but not bad signatures
         # Signatures were checked in grab_srcfiles
         silent_call(
-            'dpkg-source -x --'.split()
+            'dpkg-source -x --no-copy --'.split()
             + [dsc_finfo.local_path, xdir])
         try:
             with open_chardet(xdir + '/debian/changelog') as cl:
