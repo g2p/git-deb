@@ -287,8 +287,12 @@ class Snapshots:
         #debug(old_cache_path, size, finfos)
         ref_path = self._get_by_hash(fhash, size, old_cache_path)
         for finfo in finfos:
-            # XXX path traversal
+            assert '/' not in finfo.name
+            assert '/' not in finfo.archive_name
+            assert '..' not in finfo.path
+            assert finfo.path[0] == '/'
             dpath = self.debsnap_dir + 'archive/' + finfo.archive_name + finfo.path
+            assert os.path.relpath(dpath, self.debsnap_dir).startswith('archive/')
             os.makedirs(dpath, exist_ok=True)
             local_path = dpath + '/' + finfo.name
             try:
