@@ -1,8 +1,57 @@
 import collections
 import debian.deb822
 import email.utils
+import os
 import re
 import subprocess
+import sys
+
+
+def ignore(*args):
+    pass
+
+def printerr(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+def bail(msg):
+    printerr(msg)
+    sys.exit(1)
+
+warn = printerr
+debug = ignore
+
+
+# Don't write to ~/.local/share/keyrings,
+# it's where gnome-keyrings stores secrets.
+KEYRINGS_PATH = (
+    os.path.expanduser('~/.local/share/public-keyrings'),
+    os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyrings')
+
+
+class Keyrings(collections.OrderedDict):
+    def __init__(self):
+        super().__init__()
+        self.missing = False
+        for sname, fname in self._init_list:
+            for sp in KEYRINGS_PATH:
+                kr_path = os.path.join(sp, fname)
+                if os.path.exists(kr_path):
+                    self[sname] = kr_path
+                    break
+            else:
+                self.missing = True
+
+    def warn_missing(self):
+        warn('Some keyrings are missing, please run `git deb get-keyrings`')
+
+    _init_list = (
+        ('debian', 'debian-keyring.gpg'),
+        ('debian-maintainers', 'debian-maintainers.gpg'),
+        ('debian-emeritus', 'emeritus-keyring.gpg'),
+        ('debian-emeritus-pgp', 'emeritus-keyring.pgp'),
+        ('debian-removed', 'removed-keys.gpg'),
+        ('debian-removed-pgp', 'removed-keys.pgp'),
+    )
 
 
 # very relaxed, we'll be dealing with historical data
@@ -49,10 +98,11 @@ def parse_changelog(cl, skip_versions, just_one=False):
 SigInfo = collections.namedtuple('SigInfo', 'kr_name kid uid sig_ts sigtype cleartext')
 
 
-def check_sig(keyrings, dsc_path):
+def check_sig(keyrings, sequence, desc):
+    sequence = list(sequence)
     for kr_name, kr_path in keyrings.items():
-        gi = debian.deb822.GpgInfo.from_file(
-            dsc_path, keyrings=[kr_path])
+        gi = debian.deb822.GpgInfo.from_sequence(
+            sequence, keyrings=[kr_path])
         if not gi.valid():
             continue
         break
@@ -72,7 +122,7 @@ def check_sig(keyrings, dsc_path):
         # ERRSIG 6908386EC98FE2A1 17 2 01 1160038149 9
         if 'NO_PUBKEY' in gi and keyrings.missing:
             keyrings.warn_missing()
-        bail('No valid signature on {} {}'.format(dsc_path, gi))
+        bail('No valid signature on {} {}'.format(desc, gi))
     # See /usr/share/doc/gnupg/DETAILS.gz
     for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
         try:
@@ -85,9 +135,12 @@ def check_sig(keyrings, dsc_path):
     # Getting (only) the cleartext is way too tricky,
     # hopefully this guarantees there is a single signature
     # and we're not getting junk outside the signed area
-    cleartext = subprocess.check_output(
-        ['gpg', '--decrypt', '--keyring', kr_path, '--', dsc_path],
-        stderr=subprocess.DEVNULL)
+    with subprocess.Popen(
+        ['gpg', '--decrypt', '--keyring', kr_path],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE
+    ) as proc:
+        cleartext, err = proc.communicate(b''.join(sequence))
+        assert proc.returncode == 0, (cleartext, err)
     (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
      hashalg, sigclass, fprint1, *extra) = gi['VALIDSIG']
     #sigid, date1, ts1, *extra = gi['SIG_ID']

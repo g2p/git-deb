@@ -28,14 +28,10 @@ import types
 import urllib.parse
 
 import gitdeb
+from gitdeb import bail, ignore, printerr, warn, debug
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
-# Don't write to ~/.local/share/keyrings,
-# it's where gnome-keyrings stores secrets.
-KEYRINGS_PATH = (
-    os.path.expanduser('~/.local/share/public-keyrings'),
-    os.path.expanduser('~/.local/share/keyrings'), '/usr/share/keyrings')
 
 IDENT_RE = re.compile(r'^([^<>]*?)\s*<([^<>]+)>$')
 SIG_KID_RE = re.compile(r'^[0-9A-F]{16}$')
@@ -63,18 +59,6 @@ def silent_call(cmd):
     except subprocess.CalledProcessError as exn:
         bail('Command {} failed with output {}'.format(cmd, exn.output))
 
-def ignore(*args):
-    pass
-
-def printerr(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
-
-warn = printerr
-debug = ignore
-
-def bail(msg):
-    printerr(msg)
-    sys.exit(1)
 
 if sys.stderr.isatty():
     def progress(msg):
@@ -86,31 +70,6 @@ else:
 class BrokenChangelog(Exception):
     pass
 
-
-class Keyrings(collections.OrderedDict):
-    def __init__(self):
-        super().__init__()
-        self.missing = False
-        for sname, fname in self._init_list:
-            for sp in KEYRINGS_PATH:
-                kr_path = os.path.join(sp, fname)
-                if os.path.exists(kr_path):
-                    self[sname] = kr_path
-                    break
-            else:
-                self.missing = True
-
-    def warn_missing(self):
-        warn('Some keyrings are missing, please run `git deb get-keyrings`')
-
-    _init_list = (
-        ('debian', 'debian-keyring.gpg'),
-        ('debian-maintainers', 'debian-maintainers.gpg'),
-        ('debian-emeritus', 'emeritus-keyring.gpg'),
-        ('debian-emeritus-pgp', 'emeritus-keyring.pgp'),
-        ('debian-removed', 'removed-keys.gpg'),
-        ('debian-removed-pgp', 'removed-keys.pgp'),
-    )
 
 
 if False:
@@ -218,6 +177,10 @@ def set_excl(d, k, v):
             raise RuntimeError(k, v, d[k])
         return
     d[k] = v
+
+
+def peek(seq):
+    return next(iter(seq))
 
 
 class Snapshots:
@@ -379,7 +342,8 @@ class Snapshots:
         dsc_finfos_by_cleartext = collections.defaultdict(list)
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
-            sig_info = gitdeb.check_sig(keyrings, dsc_path)
+            with open(dsc_path, 'rb') as seq:
+                sig_info = gitdeb.check_sig(keyrings, seq, desc=dsc_path)
             try:
                 sig_info = sig_info._replace(uid=clean_uid(sig_info.uid, sig_info.kid))
             except ValueError:
@@ -394,7 +358,9 @@ class Snapshots:
         elif len(dsc_finfos_by_hash) > 1:
             debug('Multiple dscs for version {} {}'.format(
                 ver, [fi.local_path for fi in dsc_finfos]))
-        return SrcPkg(ver, dsc_finfos, sig_info.cleartext)
+        assert len(set(fi.name for fi in dsc_finfos)) == 1
+        return SrcPkg(ver, dsc_finfos, sig_info.cleartext,
+                      desc=peek(dsc_finfos).local_path)
 
 
 def cmd_capabilities(args):
@@ -421,9 +387,9 @@ def cmd_option(args):
     elif args.name == 'verbosity':
         verbosity = int(args.value)
         if verbosity < 1:
-            warn = ignore
+            warn = gitdeb.warn = ignore
         elif verbosity > 1:
-            debug = printerr
+            debug = gitdeb.debug = printerr
         print('ok')
     else:
         print('unsupported')
@@ -481,12 +447,10 @@ class SrcPkg:
     prev_ver = None
     authorship = None
 
-    def __init__(self, version, dsc_finfos, cleartext):
+    def __init__(self, version, dsc_finfos, cleartext, desc):
         self.version = version
         self.dsc_finfos = dsc_finfos
-        assert len(set(fi.name for fi in dsc_finfos)) == 1
-        dsc_finfo = next(iter(dsc_finfos))
-        self.desc = dsc_finfo.local_path
+        self.desc = desc
         # actually bytes, not text
         self.cleartext = cleartext
         self.dsc = debian.deb822.Dsc(cleartext)
@@ -519,22 +483,23 @@ class SrcPkg:
                     assert re.match(r'^{}_{}\.(diff|debian)\.'.format(
                         re.escape(pkgname_quoted), re.escape(version)), pn), pn
             assert self.orig_name is not None, version
-            dsc_path_key = path_key(dsc_finfo)
-            self.orig_key = tuple(
-                snaps.hash_of_path[dsc_path_key._replace(name=on)]
-                for on in [self.orig_name] + self.comp_names)
 
     _unpack_cache = {}
-    def unpack(self, dsc_path):
+    def unpack(self, dsc_finfo):
         assert not hasattr(self, 'xdir')
         xdir = tdir + '/x/' + self.version
+
         # Will fail on bad checksums, but not bad signatures
         # Signatures were checked in grab_srcfiles
         silent_call(
             'dpkg-source -x --no-copy --'.split()
-            + [dsc_path, xdir])
+            + [dsc_finfo.local_path, xdir])
         self.xdir = xdir
         if not self.native:
+            dsc_path_key = path_key(dsc_finfo)
+            self.orig_key = tuple(
+                snaps.hash_of_path[dsc_path_key._replace(name=on)]
+                for on in [self.orig_name] + self.comp_names)
             if self.orig_key in self._unpack_cache:
                 self.orig_mtime, self.odir = self._unpack_cache[self.orig_key]
                 return
@@ -543,7 +508,7 @@ class SrcPkg:
             odir = tdir + '/o/' + self.version
             silent_call(
                 'dpkg-source -x --no-copy --skip-debianization --'.split()
-                + [dsc_path, odir])
+                + [dsc_finfo.local_path, odir])
             mtime = 0
             for (dn, dirs, files) in os.walk(odir):
                 for fn in files:
@@ -623,12 +588,13 @@ def cmd_import(args):
         try:
             pkg = pkg_by_ver[ver] = snaps.grab_srcfiles(ver)
             # order isn't important
-            dsc_path = next(iter(pkg.dsc_finfos)).local_path
+            dsc_finfo = peek(pkg.dsc_finfos)
+            dsc_path = dsc_finfo.local_path
         except MissingSource:
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
             continue
-        pkg.unpack(dsc_path)
+        pkg.unpack(dsc_finfo)
         if not pkg.native:
             nonnat_pkgs.append(pkg)
         try:
@@ -838,7 +804,7 @@ def main():
     assert not url.netloc
     assert not url.fragment
 
-    keyrings = Keyrings()
+    keyrings = gitdeb.Keyrings()
     parse_url_debsnap(url)
 
     # Run after ?trust= has been parsed

@@ -1,6 +1,7 @@
 #!/usr/bin/python3.3
 
 import argparse
+import debian.deb822
 import glob
 import os
 import shlex
@@ -30,9 +31,28 @@ def cmd_get_keyrings(args):
 
 def cmd_export(args):
     assert args.refname[0] != '-'
-    import debian.deb822
     h0 = subprocess.check_output(
         ['git', 'show-ref', '-s', '--', args.refname]).rstrip().decode()
+    try:
+        tag = subprocess.check_output(
+            'git describe --exact-match'.split() + [h0]).rstrip().decode()
+    except subprocess.CalledProcessError:
+        return export_heuristic(h0)
+    else:
+        return export_exact(h0, tag)
+
+def export_exact(h0, tag):
+    keyrings = gitdeb.Keyrings()
+    md, msg, dat = subprocess.check_output(
+        'git cat-file tag'.split() + [tag]).split(b'\n\n', 2)
+    sig_info = gitdeb.check_sig(keyrings, [dat], tag)
+    dsc = debian.deb822.Dsc(sig_info.cleartext)
+    native = len(dsc['Files']) == 1
+    pkgname = dsc['Source']
+    version = dsc['Version']
+    return export_common(pkgname, native, version, h0)
+
+def export_heuristic(h0):
     control_file = debian.deb822.Deb822(
         subprocess.check_output(
             ['git', 'show', h0 + ':debian/control']))
@@ -45,7 +65,22 @@ def cmd_export(args):
         proc.kill()
     if '-' in version:
         native = False
-        orig_version, debian_revision = version.split('-')
+    else:
+        native = True
+        out = subprocess.check_output(
+            ['git', 'log', '-n1', '--format=%P', h0]).decode()
+        parents = out.split()
+        # Would fail atop_1.23 (non-native without a debian rev)
+        # export_heuristic is for policy-compliant packages,
+        # broken historical packages use export_exact
+        assert len(parents) < 2, parents
+    return export_common(pkgname, native, version, h0)
+
+
+def export_common(pkgname, native, version, h0):
+    co_name = '{}-{}'.format(pkgname, version.split('-')[0])
+    if not native:
+        orig_version = version.split('-')[0]
         with subprocess.Popen(
             ['git', 'log', '--format=%P', h0],
             universal_newlines=True, stdout=subprocess.PIPE
@@ -60,17 +95,6 @@ def cmd_export(args):
                     p1, = prev_parents
                     break
                 prev_parents = parents
-        co_name = '{}-{}'.format(pkgname, orig_version)
-    else:
-        native = True
-        out = subprocess.check_output(
-            ['git', 'log', '-n1', '--format=%P', h0]).decode()
-        parents = out.split()
-        # Will fail with atop_1.23 (non-native without a debian rev)
-        # Using the version number works fine with policy-compliant packages,
-        # and it's hard to make a heuristic for the rest.
-        assert len(parents) < 2, parents
-        co_name = '{}-{}'.format(pkgname, version)
     with tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.export') as tdir:
         tdir += '/'
         co_dir = tdir + co_name
