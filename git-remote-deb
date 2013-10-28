@@ -611,9 +611,16 @@ def slurp_tree(path, desc):
     return tree_hash
 
 
-def print_text(text):
+def text_data(text):
     print('data {}'.format(len(text.encode())))
     print(text)
+
+
+def binary_data(data):
+    print('data {}'.format(len(data)))
+    sys.stdout.flush()
+    sys.stdout.buffer.write(data + b'\n')
+    sys.stdout.buffer.flush()
 
 
 done_refs = set()
@@ -711,7 +718,7 @@ def cmd_import(args):
         print('commit ' + orig_ref)
         print('mark ' + pkg.orig_mark_ref)
         print('committer <tar-importer> {} +0000'.format(int(pkg.orig_mtime)))
-        print_text('Import {}'.format(pkg.orig_version))
+        text_data('Import {}'.format(pkg.orig_version))
         print('deleteall')
         print('M 040000 {} '.format(orig_hash))
         print()
@@ -738,7 +745,7 @@ def cmd_import(args):
                 'committer {} {} +0000'.format(author, int(date.timestamp())))
         else:
             print('committer <malformed-changelog> 0 +0000')
-        print_text('Import {}'.format(ver))
+        text_data('Import {}'.format(ver))
         if pkg.prev_ver is not None:
             if not depth or pkg.prev_ver in versions_depth_set:
                 print('from ' + resolved[pkg.prev_ver])
@@ -761,7 +768,9 @@ def cmd_import(args):
             print('tag {}/{}'.format(dsc_finfo.archive_name, quote_ver(ver)))
             print('from ' + mark_ref)
             print('tagger {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
-            print_text(msg)
+            msg += '\n\n'
+            with open(dsc_finfo.local_path, 'rb') as df:
+                binary_data(msg.encode() + df.read())
         done.add(ver)
     print('reset ' + import_ref)
     print('from ' + resolved[versions[0]])
