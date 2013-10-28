@@ -642,6 +642,7 @@ def cmd_import(args):
     ghosts = set()
     is_root = True
     todo = set()
+    nonnat_pkgs = []
     os.mkdir(tdir + '/x')
     os.mkdir(tdir + '/o')
     for ver in reversed(versions_depth):
@@ -660,6 +661,8 @@ def cmd_import(args):
             version_set.remove(ver)
             continue
         pkg.unpack(dsc_path)
+        if not pkg.native:
+            nonnat_pkgs.append(pkg)
         try:
             cl_vers = pkg.parse_changelog(skip_versions=skip_versions)
         except BrokenChangelog:
@@ -696,8 +699,26 @@ def cmd_import(args):
         debug('Already up to date')
         done_refs.add(remote_ref)
         return
-    done = set()
+
     marks = itertools.count(1)
+    prev_key = None
+    for pkg in nonnat_pkgs:
+        if pkg.orig_key == prev_key:
+            pkg.orig_mark_ref = prev_pkg.orig_mark_ref
+            continue
+        orig_hash = slurp_tree(pkg.odir, desc=pkg.orig_name)
+        pkg.orig_mark_ref = ':{}'.format(next(marks))
+        print('commit ' + orig_ref)
+        print('mark ' + pkg.orig_mark_ref)
+        print('committer <tar-importer> {} +0000'.format(int(pkg.orig_mtime)))
+        print_text('Import {}'.format(pkg.orig_version))
+        print('deleteall')
+        print('M 040000 {} '.format(orig_hash))
+        print()
+        prev_key = pkg.orig_key
+        prev_pkg = pkg
+
+    done = set()
     while todo:
         ver = todo.pop()
         if ver in done:
@@ -706,16 +727,6 @@ def cmd_import(args):
         progress('Importing {}'.format(ver))
         todo.update(successors[ver])
         pkg = pkg_by_ver[ver]
-        if not pkg.native:
-            orig_hash = slurp_tree(pkg.odir, desc=pkg.orig_name)
-            orig_mark_ref = ':{}'.format(next(marks))
-            print('commit ' + orig_ref)
-            print('mark ' + orig_mark_ref)
-            print('committer <tar-importer> {} +0000'.format(int(pkg.orig_mtime)))
-            print_text('Import {}'.format(pkg.orig_version))
-            print('deleteall')
-            print('M 040000 {} '.format(orig_hash))
-            print()
         tree_hash = slurp_tree(pkg.xdir, desc=pkg.desc)
 
         mark_ref = ':{}'.format(next(marks))
@@ -732,7 +743,7 @@ def cmd_import(args):
             if not depth or pkg.prev_ver in versions_depth_set:
                 print('from ' + resolved[pkg.prev_ver])
         if not pkg.native:
-            print('merge ' + orig_mark_ref)
+            print('merge ' + pkg.orig_mark_ref)
         print('deleteall')
         print('M 040000 {} '.format(tree_hash))
         print()
