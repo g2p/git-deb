@@ -206,6 +206,20 @@ def clean_uid(uid, kid):
         raise ValueError(uid)
 
 
+PathKey = collections.namedtuple('PathKey', 'archive_name path name')
+def path_key(finfo):
+    # only the path component can contain slashes
+    return PathKey(finfo.archive_name, finfo.path, finfo.name)
+
+
+def set_excl(d, k, v):
+    if k in d:
+        if d[k] != v:
+            raise RuntimeError(k, v, d[k])
+        return
+    d[k] = v
+
+
 class Snapshots:
     def __init__(self):
         # s.d.o versions are cached for 600s
@@ -214,6 +228,8 @@ class Snapshots:
         os.makedirs(self.debsnap_dir + 'by-hash', exist_ok=True)
         os.makedirs(self.debsnap_dir + 'archive', exist_ok=True)
         os.makedirs(self.debsnap_dir + 'json', exist_ok=True)
+
+        self.hash_of_path = {}
 
         self.http = sess = requests.Session()
         # May not work out of the box
@@ -354,6 +370,8 @@ class Snapshots:
             if finfos[0].name.endswith('.dsc'):
                 dsc_finfos.update(finfos)
                 dsc_finfos_by_hash[fhash] = finfos
+            for finfo in finfos:
+                set_excl(self.hash_of_path, path_key(finfo), fhash)
         if not dsc_finfos:
             warn('No signature file for {}'.format(ver))
             # http://snapshot.debian.org/package/sudo/1.3.1pl4-1/
@@ -506,17 +524,20 @@ class SrcPkg:
         self.version = version
         self.dsc_finfos = dsc_finfos
         assert len(set(fi.name for fi in dsc_finfos)) == 1
-        self.desc = next(iter(dsc_finfos))
+        dsc_finfo = next(iter(dsc_finfos))
+        self.desc = dsc_finfo.local_path
         # actually bytes, not text
         self.cleartext = cleartext
         self.dsc = debian.deb822.Dsc(cleartext)
         part_names = [fi['name'] for fi in self.dsc['Files']]
+        assert not any('/' in pn for pn in part_names), part_names
         #self.native = '-' not in version
         self.native = len(part_names) == 1
         if self.native:
             assert len(part_names) == 1, (part_names, version)
             self.native_name, = part_names
-            assert self.native_name.startswith('{}_{}.tar.'.format(pkgname_quoted, version)), self.native_name
+            assert self.native_name.startswith(
+                '{}_{}.tar.'.format(pkgname_quoted, version)), self.native_name
         else:
             try:
                 self.orig_version, debian_revision = version.split('-')
@@ -537,7 +558,12 @@ class SrcPkg:
                     assert re.match(r'^{}_{}\.(diff|debian)\.'.format(
                         re.escape(pkgname_quoted), re.escape(version)), pn), pn
             assert self.orig_name is not None, version
+            dsc_path_key = path_key(dsc_finfo)
+            self.orig_key = tuple(
+                snaps.hash_of_path[dsc_path_key._replace(name=on)]
+                for on in [self.orig_name] + self.comp_names)
 
+    _unpack_cache = {}
     def unpack(self, dsc_path):
         assert not hasattr(self, 'xdir')
         xdir = tdir + '/x/' + self.version
@@ -546,7 +572,11 @@ class SrcPkg:
         silent_call(
             'dpkg-source -x --no-copy --'.split()
             + [dsc_path, xdir])
+        self.xdir = xdir
         if not self.native:
+            if self.orig_key in self._unpack_cache:
+                self.orig_mtime, self.odir = self._unpack_cache[self.orig_key]
+                return
             # This won't split component tarballs,
             # but it's good enough for a round trip
             odir = tdir + '/o/' + self.version
@@ -561,7 +591,7 @@ class SrcPkg:
                         mtime = mtime1
             self.orig_mtime = mtime
             self.odir = odir
-        self.xdir = xdir
+            self._unpack_cache[self.orig_key] = mtime, odir
 
     def parse_changelog(self, skip_versions):
         with open_chardet(self.xdir + '/debian/changelog') as cl:
