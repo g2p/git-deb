@@ -589,6 +589,13 @@ class SrcPkg:
             silent_call(
                 'dpkg-source -x --no-copy --skip-debianization --'.split()
                 + [dsc_path, odir])
+            mtime = 0
+            for (dn, dirs, files) in os.walk(odir):
+                for fn in files:
+                    mtime1 = os.stat(os.path.join(dn, fn)).st_mtime
+                    if mtime1 > mtime:
+                        mtime = mtime1
+            self.orig_mtime = mtime
             self.odir = odir
         self.xdir = xdir
 
@@ -710,7 +717,7 @@ def cmd_import(args):
             orig_mark_ref = ':{}'.format(next(marks))
             print('commit ' + orig_ref)
             print('mark ' + orig_mark_ref)
-            print('committer <tar-importer> 0 +0000')
+            print('committer <tar-importer> {} +0000'.format(int(pkg.orig_mtime)))
             print_text('Import {}'.format(pkg.orig_version))
             print('deleteall')
             print('M 040000 {} '.format(orig_hash))
