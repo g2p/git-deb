@@ -18,10 +18,11 @@ Python 3.3, Pip, GPG, Git, Dpkg (specifically the dpkg-dev subpackage)
 
     git clone deb::pkgname
 
-The history contains authors (from Debian changelogs) and
-committers (from dsc signatures), both with appropriate dates.
+The history is reconstructed from Debian changelogs, with
+annotated tags for every upload, both with appropriate
+timestamps and authorship.
 
-    git log --graph --all --pretty='%Cred%H%Cblue%d%Creset%nChangelog %ai %an <%ae>%nSignature %ci %cn <%ce>%n%s%b%n'
+    git log --graph --decorate --all
 
 Packages that have been in the archive for some time may have
 signatures that can't be verified with current Debian keyrings.
@@ -29,7 +30,8 @@ signatures that can't be verified with current Debian keyrings.
     git deb get-keyrings
 
 will download historical keyrings (using Apt).
-Commits using those keys will be annotated.
+Upload tags will note when the key comes from
+one of these keyrings.
 
 ## Fixes
 

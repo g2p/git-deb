@@ -16,6 +16,7 @@ import email.utils
 import hashlib
 import io
 import isodate # pypi
+import itertools
 import json
 import os
 import re
@@ -353,7 +354,6 @@ class Snapshots:
             assert '/' not in fhash
             self._get_file(fhash, finfos)
             if finfos[0].name.endswith('.dsc'):
-                # Curl has multiple dscs for the same upload.  Horrors.
                 dsc_finfos.update(finfos)
                 dsc_finfos_by_hash[fhash] = finfos
         if not dsc_finfos:
@@ -415,10 +415,9 @@ class Snapshots:
             bail('Multiple dsc cleartexts for version {} {}'.format(
                 ver, [fi.local_path for fi in dsc_finfos]))
         elif len(dsc_finfos_by_hash) > 1:
-            warn('Multiple dscs for version {} {}'.format(
+            debug('Multiple dscs for version {} {}'.format(
                 ver, [fi.local_path for fi in dsc_finfos]))
-        #return dsc_finfos_by_cleartext
-        return min(dsc_finfos, key=upload_precedence), cleartext
+        return SrcPkg(ver, dsc_finfos, cleartext)
 
 
 def cmd_capabilities(args):
@@ -513,14 +512,18 @@ def open_chardet(fname):
     fi.seek(0)
     return io.TextIOWrapper(fi, encoding)
 
+def quote_ver(ver):
+    return ver.replace(':', '%').replace('~', '_')
+
 def tagname(ver):
     # escape : and ~. Other problem characters aren't valid for debian
     #return 'refs/tags/' + urllib.parse.quote(ver, safe='+')
-    return 'refs/tags/' + ver.replace(':', '%').replace('~', '_')
+    return 'refs/tags/' + quote_ver(ver)
 
 def resolve_ref(ver):
     try:
-        return subprocess.check_output(['git', 'show-ref', '-s', '--', tagname(ver)])
+        return subprocess.check_output(
+            ['git', 'show-ref', '-s', '--', tagname(ver)]).decode()
     except subprocess.CalledProcessError:
         pass
 
@@ -534,10 +537,11 @@ def gpg_ts(ts):
 class SrcPkg:
     prev_ver = None
     authorship = None
-    def __init__(self, version, dsc_finfo, cleartext):
+    def __init__(self, version, dsc_finfos, cleartext):
         self.version = version
-        self.dsc_finfo = dsc_finfo
-        self.dsc = debian.deb822.Dsc(cleartext)
+        self.dsc_finfos = dsc_finfos
+        self.cleartext = cleartext
+        #self.dsc = debian.deb822.Dsc(cleartext)
 
 
 done_refs = set()
@@ -574,8 +578,10 @@ def cmd_import(args):
             continue
         progress('Downloading {}'.format(ver))
         try:
-            dsc_finfo, cleartext = snaps.grab_srcfiles(ver)
-            pkg = pkg_by_ver[ver] = SrcPkg(ver, dsc_finfo, cleartext)
+            pkg = pkg_by_ver[ver] = snaps.grab_srcfiles(ver)
+            # order isn't important
+            dsc_finfo, *extra = pkg.dsc_finfos
+            dsc_path = dsc_finfo.local_path
         except MissingSource:
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
@@ -585,13 +591,13 @@ def cmd_import(args):
         # Signatures were checked in grab_srcfiles
         silent_call(
             'dpkg-source -x --no-copy --'.split()
-            + [dsc_finfo.local_path, xdir])
+            + [dsc_path, xdir])
         try:
             with open_chardet(xdir + '/debian/changelog') as cl:
                 pkg.authorship, cl_vers = parse_changelog(cl, skip_versions)
         except BrokenChangelog:
             warn("Couldn't parse changelog for {}"
-                 .format(dsc_finfo.local_path))
+                 .format(dsc_path))
             continue
         except UnicodeDecodeError:
             # XXX On puppet-3.2.4/debian/changelog, charade and chardet
@@ -599,7 +605,7 @@ def cmd_import(args):
             # respectively
             # This error will likely break newer uploads as well; bail
             bail("Couldn't parse changelog encoding for {}"
-                 .format(dsc_finfo.local_path))
+                 .format(dsc_path))
         assert cl_vers[0] == ver, (cl_vers[0], ver)
         skip_versions.add(ver)
         ver_ghosts = set()
@@ -627,6 +633,7 @@ def cmd_import(args):
         done_refs.add(remote_ref)
         return
     done = set()
+    marks = itertools.count(1)
     while todo:
         ver = todo.pop()
         if ver in done:
@@ -635,47 +642,57 @@ def cmd_import(args):
         progress('Importing {}'.format(ver))
         todo.update(successors[ver])
         pkg = pkg_by_ver[ver]
-        dsc_finfo = pkg.dsc_finfo
+        dsc_finfo, *extra = pkg.dsc_finfos
+        dsc_path = dsc_finfo.local_path
         xdir = tdir + '/x/' + ver
         os.environ['GIT_WORK_TREE'] = xdir
         os.environ['GIT_INDEX_FILE'] = xdir + '.index'
         try:
             silent_call('git add -A'.split())
         except subprocess.CalledProcessError:
-            bail('Error adding from {}'.format(dsc_finfo.local_path))
+            bail('Error adding from {}'.format(dsc_path))
         tree_hash = subprocess.check_output(
             'git write-tree'.split()).decode().rstrip()
 
-        (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
-         hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
-        #sigid, date1, ts1, *extra = gi['SIG_ID']
-
+        mark = next(marks)
+        mark_ref = ':{}'.format(mark)
         print('commit ' + import_ref)
-        print('mark :1')
+        print('mark ' + mark_ref)
         if pkg.authorship:
             author, date = pkg.authorship
             print(
-                'author {} {} +0000'.format(author, int(date.timestamp())))
-            print('committer {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
+                'committer {} {} +0000'.format(author, int(date.timestamp())))
         else:
             print(
                 'committer <malformed-changelog> 0 +0000')
         msg = 'Import {}'.format(ver)
-        if (dsc_finfo.kr_name, dsc_finfo.sigtype) != ('debian', 'GOODSIG'):
-            msg += ' ({kr_name}/{kid} {sigtype})'.format(**vars(dsc_finfo))
         print('data {}'.format(len(msg.encode())))
         print(msg)
         if pkg.prev_ver is not None:
             if not depth or pkg.prev_ver in versions_depth_set:
-                print('from ' + tagname(pkg.prev_ver))
+                print('from ' + resolved[pkg.prev_ver])
         print('deleteall')
         print('M 040000 {} '.format(tree_hash))
         print()
         print('reset ' + tagname(ver))
-        print('from :1')
+        print('from ' + mark_ref)
+        assert ver not in resolved, ver
+        resolved[ver] = mark_ref
+        for dsc_finfo in pkg.dsc_finfos:
+            msg = 'Upload {}'.format(ver)
+            if (dsc_finfo.kr_name, dsc_finfo.sigtype) != ('debian', 'GOODSIG'):
+                msg += ' ({kr_name}/{kid} {sigtype})'.format(**vars(dsc_finfo))
+            (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
+             hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
+            #sigid, date1, ts1, *extra = gi['SIG_ID']
+            print('tag {}/{}'.format(dsc_finfo.archive_name, quote_ver(ver)))
+            print('from ' + mark_ref)
+            print('tagger {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
+            print('data {}'.format(len(msg.encode())))
+            print(msg)
         done.add(ver)
     print('reset ' + import_ref)
-    print('from ' + tagname(versions[0]))
+    print('from ' + resolved[versions[0]])
     done_refs.add(remote_ref)
 
 
