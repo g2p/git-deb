@@ -379,53 +379,14 @@ class Snapshots:
         dsc_finfos_by_cleartext = collections.defaultdict(list)
         for finfo in dsc_finfos:
             dsc_path = finfo.local_path
-            for kr_name, kr_path in keyrings.items():
-                gi = debian.deb822.GpgInfo.from_file(
-                    dsc_path, keyrings=[kr_path])
-                if not gi.valid():
-                    continue
-                finfo.gi = gi
-                finfo.kr_name = kr_name
-                break
-            else:
-                # On wget_1.5.3-3.1.dsc
-                # ERRSIG 7D7C0636C76F38D2 20 2 01 1039606003 4
-                # indicating problems with an ElGamal signature
-                # gnupg 1.2.5-3 can verify it, 1.4.0-3 can't:
-                # 2002-12-11 1039606003 0 3 0 20 2 01 576E100B518D2F1636B028053CB892502FA3BC2D
-                # On sudo_1.6.2p2-2.2.dsc
-                # ERRSIG 7D7C0636C76F38D2 20 3 01 1019775429 4
-                # Those keys are compromised:
-                # http://lists.gnupg.org/pipermail/gnupg-announce/2003q4/000160.html
-
-                # Or missing keys
-                # On grub_0.97-16.1~bpo.1.dsc
-                # ERRSIG 6908386EC98FE2A1 17 2 01 1160038149 9
-                if 'NO_PUBKEY' in gi and keyrings.missing:
-                    keyrings.warn_missing()
-                bail('No valid signature on {} {}'.format(dsc_path, gi))
-            # See /usr/share/doc/gnupg/DETAILS.gz
-            for sigtype in 'GOODSIG REVKEYSIG EXPKEYSIG'.split():
-                try:
-                    kid, uid, *extra = gi[sigtype]
-                except KeyError:
-                    continue
-                try:
-                    finfo.uid = clean_uid(uid, kid)
-                except ValueError:
-                    bail('Bad uid {} for {} on {}'.format(uid, kid, dsc_path))
-                finfo.kid = kid
-                finfo.sigtype = sigtype
-                break
-            else:
-                bail('Not a good signature {}'.format(finfo.gi))
-            # Getting (only) the cleartext is way too tricky,
-            # hopefully this guarantees there is a single signature
-            # and we're not getting junk outside the signed area
-            cleartext = subprocess.check_output(
-                ['gpg', '--decrypt', '--keyring', kr_path, '--', dsc_path],
-                stderr=subprocess.DEVNULL)
-            dsc_finfos_by_cleartext[cleartext].append(finfo)
+            sig_info = gitdeb.check_sig(keyrings, dsc_path)
+            try:
+                sig_info = sig_info._replace(uid=clean_uid(sig_info.uid, sig_info.kid))
+            except ValueError:
+                bail('Bad uid {} for {} on {}'.format(
+                    sig_info.uid, sig_info.kid, sig_info.dsc_path))
+            finfo.sig_info = sig_info
+            dsc_finfos_by_cleartext[sig_info.cleartext].append(finfo)
         if len(dsc_finfos_by_cleartext) > 1:
             # http://snapshot.debian.org/package/file/4.17-5etch2/
             bail('Multiple dsc cleartexts for version {} {}'.format(
@@ -433,7 +394,7 @@ class Snapshots:
         elif len(dsc_finfos_by_hash) > 1:
             debug('Multiple dscs for version {} {}'.format(
                 ver, [fi.local_path for fi in dsc_finfos]))
-        return SrcPkg(ver, dsc_finfos, cleartext)
+        return SrcPkg(ver, dsc_finfos, sig_info.cleartext)
 
 
 def cmd_capabilities(args):
@@ -759,15 +720,14 @@ def cmd_import(args):
         assert ver not in resolved, ver
         resolved[ver] = mark_ref
         for dsc_finfo in pkg.dsc_finfos:
+            sig_info = dsc_finfo.sig_info
             msg = 'Upload {}'.format(ver)
-            if (dsc_finfo.kr_name, dsc_finfo.sigtype) != ('debian', 'GOODSIG'):
-                msg += ' ({kr_name}/{kid} {sigtype})'.format(**vars(dsc_finfo))
-            (fprint, sig_date, sig_ts, exp_ts, sigver, reserved, pkalg,
-             hashalg, sigclass, fprint1, *extra) = dsc_finfo.gi['VALIDSIG']
-            #sigid, date1, ts1, *extra = gi['SIG_ID']
+            if (sig_info.kr_name, sig_info.sigtype) != ('debian', 'GOODSIG'):
+                msg += ' ({kr_name}/{kid} {sigtype})'.format(
+                    **vars(sig_info))
             print('tag {}/{}'.format(dsc_finfo.archive_name, quote_ver(ver)))
             print('from ' + mark_ref)
-            print('tagger {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
+            print('tagger {} {} +0000'.format(sig_info.uid, gpg_ts(sig_info.sig_ts)))
             msg += '\n\n'
             with open(dsc_finfo.local_path, 'rb') as df:
                 binary_data(msg.encode() + df.read())
