@@ -541,6 +541,8 @@ class SrcPkg:
     def __init__(self, version, dsc_finfos, cleartext):
         self.version = version
         self.dsc_finfos = dsc_finfos
+        assert len(set(fi.name for fi in dsc_finfos)) == 1
+        self.desc = next(iter(dsc_finfos))
         # actually bytes, not text
         self.cleartext = cleartext
         self.dsc = debian.deb822.Dsc(cleartext)
@@ -580,12 +582,37 @@ class SrcPkg:
         silent_call(
             'dpkg-source -x --no-copy --'.split()
             + [dsc_path, xdir])
+        if not self.native:
+            # This won't split component tarballs,
+            # but it's good enough for a round trip
+            odir = tdir + '/o/' + self.version
+            silent_call(
+                'dpkg-source -x --no-copy --skip-debianization --'.split()
+                + [dsc_path, odir])
+            self.odir = odir
         self.xdir = xdir
 
     def parse_changelog(self, skip_versions):
         with open_chardet(self.xdir + '/debian/changelog') as cl:
             self.authorship, cl_vers = parse_changelog(cl, skip_versions)
         return cl_vers
+
+
+def slurp_tree(path, desc):
+    os.environ['GIT_WORK_TREE'] = path
+    os.environ['GIT_INDEX_FILE'] = path + '.index'
+    try:
+        silent_call('git add -A'.split())
+    except subprocess.CalledProcessError:
+        bail('Error adding from {}'.format(desc))
+    tree_hash = subprocess.check_output(
+        'git write-tree'.split()).decode().rstrip()
+    return tree_hash
+
+
+def print_text(text):
+    print('data {}'.format(len(text.encode())))
+    print(text)
 
 
 done_refs = set()
@@ -595,6 +622,7 @@ def cmd_import(args):
     if remote_ref in done_refs:
         return
     import_ref = 'refs/debian/{}/{}'.format(remote_quoted, pkgname_quoted)
+    orig_ref = 'refs/upstream/{}/{}'.format(remote_quoted, pkgname_quoted)
     versions = snaps.get_versions()
     assert not any('/' in ver for ver in versions)
     for ver in skip:
@@ -614,6 +642,7 @@ def cmd_import(args):
     is_root = True
     todo = set()
     os.mkdir(tdir + '/x')
+    os.mkdir(tdir + '/o')
     for ver in reversed(versions_depth):
         chash = resolve_ref(ver)
         if chash is not None:
@@ -624,8 +653,7 @@ def cmd_import(args):
         try:
             pkg = pkg_by_ver[ver] = snaps.grab_srcfiles(ver)
             # order isn't important
-            dsc_finfo, *extra = pkg.dsc_finfos
-            dsc_path = dsc_finfo.local_path
+            dsc_path = next(iter(pkg.dsc_finfos)).local_path
         except MissingSource:
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
@@ -677,19 +705,19 @@ def cmd_import(args):
         progress('Importing {}'.format(ver))
         todo.update(successors[ver])
         pkg = pkg_by_ver[ver]
-        dsc_finfo, *extra = pkg.dsc_finfos
-        dsc_path = dsc_finfo.local_path
-        os.environ['GIT_WORK_TREE'] = pkg.xdir
-        os.environ['GIT_INDEX_FILE'] = pkg.xdir + '.index'
-        try:
-            silent_call('git add -A'.split())
-        except subprocess.CalledProcessError:
-            bail('Error adding from {}'.format(dsc_path))
-        tree_hash = subprocess.check_output(
-            'git write-tree'.split()).decode().rstrip()
+        if not pkg.native:
+            orig_hash = slurp_tree(pkg.odir, desc=pkg.orig_name)
+            orig_mark_ref = ':{}'.format(next(marks))
+            print('commit ' + orig_ref)
+            print('mark ' + orig_mark_ref)
+            print('committer <tar-importer> 0 +0000')
+            print_text('Import {}'.format(pkg.orig_version))
+            print('deleteall')
+            print('M 040000 {} '.format(orig_hash))
+            print()
+        tree_hash = slurp_tree(pkg.xdir, desc=pkg.desc)
 
-        mark = next(marks)
-        mark_ref = ':{}'.format(mark)
+        mark_ref = ':{}'.format(next(marks))
         print('commit ' + import_ref)
         print('mark ' + mark_ref)
         if pkg.authorship:
@@ -697,14 +725,13 @@ def cmd_import(args):
             print(
                 'committer {} {} +0000'.format(author, int(date.timestamp())))
         else:
-            print(
-                'committer <malformed-changelog> 0 +0000')
-        msg = 'Import {}'.format(ver)
-        print('data {}'.format(len(msg.encode())))
-        print(msg)
+            print('committer <malformed-changelog> 0 +0000')
+        print_text('Import {}'.format(ver))
         if pkg.prev_ver is not None:
             if not depth or pkg.prev_ver in versions_depth_set:
                 print('from ' + resolved[pkg.prev_ver])
+        if not pkg.native:
+            print('merge ' + orig_mark_ref)
         print('deleteall')
         print('M 040000 {} '.format(tree_hash))
         print()
@@ -722,8 +749,7 @@ def cmd_import(args):
             print('tag {}/{}'.format(dsc_finfo.archive_name, quote_ver(ver)))
             print('from ' + mark_ref)
             print('tagger {} {} +0000'.format(dsc_finfo.uid, gpg_ts(sig_ts)))
-            print('data {}'.format(len(msg.encode())))
-            print(msg)
+            print_text(msg)
         done.add(ver)
     print('reset ' + import_ref)
     print('from ' + resolved[versions[0]])
