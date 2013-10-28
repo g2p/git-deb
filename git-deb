@@ -31,29 +31,49 @@ def cmd_get_keyrings(args):
 def cmd_export(args):
     assert args.refname[0] != '-'
     import debian.deb822
-    out = subprocess.check_output(
-        ['git', 'log', '-n1', '--format=%H %P', args.refname]).decode()
-    h0, p0, *merged = out.split()
+    h0 = subprocess.check_output(
+        ['git', 'show-ref', '-s', '--', args.refname]).rstrip().decode()
     control_file = debian.deb822.Deb822(
         subprocess.check_output(
-            ['git', 'show', args.refname + ':debian/control']))
+            ['git', 'show', h0 + ':debian/control']))
     pkgname = control_file['Source']
-    proc = subprocess.Popen(
-        ['git', 'show', args.refname + ':debian/changelog'],
-        universal_newlines=True,
-        stdout=subprocess.PIPE)
-    author, date, version = gitdeb.parse_changelog(proc.stdout, [], just_one=True)
-    proc.kill()
+    with subprocess.Popen(
+        ['git', 'show', h0 + ':debian/changelog'],
+        universal_newlines=True, stdout=subprocess.PIPE
+    ) as proc:
+        author, date, version = gitdeb.parse_changelog(proc.stdout, [], just_one=True)
+        proc.kill()
     if '-' in version:
         native = False
         orig_version, debian_revision = version.split('-')
-        p1, = merged
+        with subprocess.Popen(
+            ['git', 'log', '--format=%P', h0],
+            universal_newlines=True, stdout=subprocess.PIPE
+        ) as proc:
+            for line in proc.stdout:
+                parents = line.split()
+                assert len(parents) < 3
+                if len(parents) == 2:
+                    p0, p1 = parents
+                    break
+                if len(parents) == 0:
+                    p1, = prev_parents
+                    break
+                prev_parents = parents
+        co_name = '{}-{}'.format(pkgname, orig_version)
     else:
         native = True
-        assert not merged
+        out = subprocess.check_output(
+            ['git', 'log', '-n1', '--format=%P', h0]).decode()
+        parents = out.split()
+        # Will fail with atop_1.23 (non-native without a debian rev)
+        # Using the version number works fine with policy-compliant packages,
+        # and it's hard to make a heuristic for the rest.
+        assert len(parents) < 2, parents
+        co_name = '{}-{}'.format(pkgname, version)
     with tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.export') as tdir:
         tdir += '/'
-        co_dir = tdir + '{}-{}'.format(pkgname, version)
+        co_dir = tdir + co_name
         os.mkdir(co_dir)
         subprocess.check_call(
             'git archive {} |{{ cd {}; tar x; }}'
@@ -64,7 +84,7 @@ def cmd_export(args):
                     'git', 'archive', '--prefix',
                     '{}-{}/'.format(pkgname, orig_version), p1], stdout=af)
             subprocess.check_call(['gzip', '--', af.name])
-        subprocess.check_call(['dpkg-source', '-b', co_dir], cwd=tdir)
+        subprocess.check_call(['dpkg-source', '-b', co_name], cwd=tdir)
         shutil.rmtree(co_dir)
         for name in os.listdir(tdir):
             shutil.copy(tdir + name, name)

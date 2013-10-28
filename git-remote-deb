@@ -704,7 +704,7 @@ def cmd_import(args):
     prev_key = None
     for pkg in nonnat_pkgs:
         if pkg.orig_key == prev_key:
-            pkg.orig_mark_ref = prev_pkg.orig_mark_ref
+            pkg.orig_mark_ref = None
             continue
         orig_hash = slurp_tree(pkg.odir, desc=pkg.orig_name)
         pkg.orig_mark_ref = ':{}'.format(next(marks))
@@ -742,7 +742,7 @@ def cmd_import(args):
         if pkg.prev_ver is not None:
             if not depth or pkg.prev_ver in versions_depth_set:
                 print('from ' + resolved[pkg.prev_ver])
-        if not pkg.native:
+        if not pkg.native and pkg.orig_mark_ref is not None:
             print('merge ' + pkg.orig_mark_ref)
         print('deleteall')
         print('M 040000 {} '.format(tree_hash))
