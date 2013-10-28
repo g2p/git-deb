@@ -537,11 +537,40 @@ def gpg_ts(ts):
 class SrcPkg:
     prev_ver = None
     authorship = None
+
     def __init__(self, version, dsc_finfos, cleartext):
         self.version = version
         self.dsc_finfos = dsc_finfos
+        # actually bytes, not text
         self.cleartext = cleartext
-        #self.dsc = debian.deb822.Dsc(cleartext)
+        self.dsc = debian.deb822.Dsc(cleartext)
+        part_names = [fi['name'] for fi in self.dsc['Files']]
+        #self.native = '-' not in version
+        self.native = len(part_names) == 1
+        if self.native:
+            assert len(part_names) == 1, (part_names, version)
+            self.native_name, = part_names
+            assert self.native_name.startswith('{}_{}.tar.'.format(pkgname_quoted, version)), self.native_name
+        else:
+            try:
+                self.orig_version, debian_revision = version.split('-')
+            except ValueError:
+                # Fail: atop_1.23.dsc
+                assert '-' not in version
+                warn('Non-native package without a debian revision {}'.format(version))
+                self.orig_version = version
+            self.orig_name = None
+            self.comp_names = []
+            for pn in part_names:
+                if pn.startswith('{}_{}.orig-'.format(pkgname_quoted, self.orig_version)):
+                    self.comp_names.append(pn)
+                elif pn.startswith('{}_{}.orig.'.format(pkgname_quoted, self.orig_version)):
+                    assert self.orig_name is None
+                    self.orig_name = pn
+                else:
+                    assert re.match(r'^{}_{}\.(diff|debian)\.'.format(
+                        re.escape(pkgname_quoted), re.escape(version)), pn), pn
+            assert self.orig_name is not None, version
 
 
 done_refs = set()
