@@ -572,6 +572,21 @@ class SrcPkg:
                         re.escape(pkgname_quoted), re.escape(version)), pn), pn
             assert self.orig_name is not None, version
 
+    def unpack(self, dsc_path):
+        assert not hasattr(self, 'xdir')
+        xdir = tdir + '/x/' + self.version
+        # Will fail on bad checksums, but not bad signatures
+        # Signatures were checked in grab_srcfiles
+        silent_call(
+            'dpkg-source -x --no-copy --'.split()
+            + [dsc_path, xdir])
+        self.xdir = xdir
+
+    def parse_changelog(self, skip_versions):
+        with open_chardet(self.xdir + '/debian/changelog') as cl:
+            self.authorship, cl_vers = parse_changelog(cl, skip_versions)
+        return cl_vers
+
 
 done_refs = set()
 def cmd_import(args):
@@ -615,23 +630,14 @@ def cmd_import(args):
             warn('Version {} has no source package'.format(ver))
             version_set.remove(ver)
             continue
-        xdir = tdir + '/x/' + ver
-        # Will fail on bad checksums, but not bad signatures
-        # Signatures were checked in grab_srcfiles
-        silent_call(
-            'dpkg-source -x --no-copy --'.split()
-            + [dsc_path, xdir])
+        pkg.unpack(dsc_path)
         try:
-            with open_chardet(xdir + '/debian/changelog') as cl:
-                pkg.authorship, cl_vers = parse_changelog(cl, skip_versions)
+            cl_vers = pkg.parse_changelog(skip_versions=skip_versions)
         except BrokenChangelog:
-            warn("Couldn't parse changelog for {}"
-                 .format(dsc_path))
+            # XXX Will still be added but outside the history graph
+            warn("Couldn't parse changelog for {}".format(dsc_path))
             continue
         except UnicodeDecodeError:
-            # XXX On puppet-3.2.4/debian/changelog, charade and chardet
-            # both fail in their own ways, finding 8859-2 and Big5
-            # respectively
             # This error will likely break newer uploads as well; bail
             bail("Couldn't parse changelog encoding for {}"
                  .format(dsc_path))
@@ -673,9 +679,8 @@ def cmd_import(args):
         pkg = pkg_by_ver[ver]
         dsc_finfo, *extra = pkg.dsc_finfos
         dsc_path = dsc_finfo.local_path
-        xdir = tdir + '/x/' + ver
-        os.environ['GIT_WORK_TREE'] = xdir
-        os.environ['GIT_INDEX_FILE'] = xdir + '.index'
+        os.environ['GIT_WORK_TREE'] = pkg.xdir
+        os.environ['GIT_INDEX_FILE'] = pkg.xdir + '.index'
         try:
             silent_call('git add -A'.split())
         except subprocess.CalledProcessError:
