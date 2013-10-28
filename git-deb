@@ -3,10 +3,13 @@
 import argparse
 import glob
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+
+import gitdeb
 
 KEYRINGS_DIR = os.path.expanduser('~/.local/share/public-keyrings')
 
@@ -25,10 +28,55 @@ def cmd_get_keyrings(args):
             shutil.copy(krn, KEYRINGS_DIR)
 
 
+def cmd_export(args):
+    assert args.refname[0] != '-'
+    import debian.deb822
+    out = subprocess.check_output(
+        ['git', 'log', '-n1', '--format=%H %P', args.refname]).decode()
+    h0, p0, *merged = out.split()
+    control_file = debian.deb822.Deb822(
+        subprocess.check_output(
+            ['git', 'show', args.refname + ':debian/control']))
+    pkgname = control_file['Source']
+    proc = subprocess.Popen(
+        ['git', 'show', args.refname + ':debian/changelog'],
+        universal_newlines=True,
+        stdout=subprocess.PIPE)
+    author, date, version = gitdeb.parse_changelog(proc.stdout, [], just_one=True)
+    proc.kill()
+    if '-' in version:
+        native = False
+        orig_version, debian_revision = version.split('-')
+        p1, = merged
+    else:
+        native = True
+        assert not merged
+    with tempfile.TemporaryDirectory(prefix='git-deb-', suffix='.export') as tdir:
+        tdir += '/'
+        co_dir = tdir + '{}-{}'.format(pkgname, version)
+        os.mkdir(co_dir)
+        subprocess.check_call(
+            'git archive {} |{{ cd {}; tar x; }}'
+            .format(shlex.quote(h0), shlex.quote(co_dir)), shell=True)
+        if not native:
+            with open(tdir + '{}_{}.orig.tar'.format(pkgname, orig_version), 'wb') as af:
+                subprocess.check_call([
+                    'git', 'archive', '--prefix',
+                    '{}-{}/'.format(pkgname, orig_version), p1], stdout=af)
+            subprocess.check_call(['gzip', '--', af.name])
+        subprocess.check_call(['dpkg-source', '-b', co_dir], cwd=tdir)
+        shutil.rmtree(co_dir)
+        for name in os.listdir(tdir):
+            shutil.copy(tdir + name, name)
+
+
 parser = argparse.ArgumentParser()
 commands = parser.add_subparsers(dest='command')
 sp_get_keyrings = commands.add_parser('get-keyrings')
 sp_get_keyrings.set_defaults(action=cmd_get_keyrings)
+sp_export = commands.add_parser('export')
+sp_export.set_defaults(action=cmd_export)
+sp_export.add_argument('refname', nargs='?', default='HEAD')
 args = parser.parse_args()
 if sys.argv[1:]:
     sys.exit(args.action(args))

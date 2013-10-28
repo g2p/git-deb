@@ -13,6 +13,7 @@ setup(
     keywords='git debian packaging import debsnap snapshot.debian.org',
     description='Bring any Debian package to Git',
     scripts=['git-deb', 'git-remote-deb'],
+    packages=['gitdeb'],
     install_requires=[
         'chardet',
         'isodate',

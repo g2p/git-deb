@@ -33,6 +33,11 @@ will download historical keyrings (using Apt).
 Upload tags will note when the key comes from
 one of these keyrings.
 
+You can also regenerate source packages from git-deb commits:
+
+    git deb export
+    git deb export debian/3.1-4
+
 ## Fixes
 
 In the case of bad/invalid/missing signatures, you may need to skip versions:
