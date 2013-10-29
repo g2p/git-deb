@@ -11,6 +11,7 @@ import sys
 import tempfile
 
 import gitdeb
+from gitdeb import backtick
 
 KEYRINGS_DIR = os.path.expanduser('~/.local/share/public-keyrings')
 
@@ -31,11 +32,9 @@ def cmd_get_keyrings(args):
 
 def cmd_export(args):
     assert args.refname[0] != '-'
-    h0 = subprocess.check_output(
-        ['git', 'show-ref', '-s', '--', args.refname]).rstrip().decode()
+    h0 = backtick(['git', 'show-ref', '-s', '--', args.refname])
     try:
-        tag = subprocess.check_output(
-            'git describe --exact-match'.split() + [h0]).rstrip().decode()
+        tag = backtick('git describe --exact-match'.split() + [h0])
     except subprocess.CalledProcessError:
         return export_heuristic(h0)
     else:
@@ -67,8 +66,7 @@ def export_heuristic(h0):
         native = False
     else:
         native = True
-        out = subprocess.check_output(
-            ['git', 'log', '-n1', '--format=%P', h0]).decode()
+        out = backtick(['git', 'log', '-n1', '--format=%P', h0])
         parents = out.split()
         # Would fail atop_1.23 (non-native without a debian rev)
         # export_heuristic is for policy-compliant packages,

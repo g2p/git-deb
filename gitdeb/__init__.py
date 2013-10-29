@@ -20,6 +20,8 @@ def bail(msg):
 warn = printerr
 debug = ignore
 
+def backtick(cmd):
+    return subprocess.check_output(cmd).decode().rstrip()
 
 # Don't write to ~/.local/share/keyrings,
 # it's where gnome-keyrings stores secrets.

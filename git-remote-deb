@@ -28,7 +28,7 @@ import types
 import urllib.parse
 
 import gitdeb
-from gitdeb import bail, ignore, printerr, warn, debug
+from gitdeb import bail, ignore, printerr, warn, debug, backtick
 
 
 SNAPSHOTS_BASE = 'http://snapshot.debian.org/'
@@ -431,8 +431,7 @@ def tagname(ver):
 
 def resolve_ref(ver):
     try:
-        return subprocess.check_output(
-            ['git', 'show-ref', '-s', '--', tagname(ver)]).decode()
+        return backtick(['git', 'show-ref', '-s', '--', tagname(ver)])
     except subprocess.CalledProcessError:
         pass
 
@@ -532,8 +531,7 @@ def slurp_tree(path, desc):
         silent_call('git add -A'.split())
     except subprocess.CalledProcessError:
         bail('Error adding from {}'.format(desc))
-    tree_hash = subprocess.check_output(
-        'git write-tree'.split()).decode().rstrip()
+    tree_hash = backtick('git write-tree'.split())
     return tree_hash
 
 
