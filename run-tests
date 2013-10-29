@@ -48,12 +48,11 @@ if False:
     subprocess.check_call('git --git-dir=gzrt.depth/.git fetch --depth=4'.split())
     log = subprocess.check_output('git --git-dir=gzrt.depth/.git log --all --oneline'.split()).splitlines()
     assert len(log) == 8, log
-subprocess.check_call('git clone deb::zeromq'.split())
 
 # Unfortunately these failures are only found in large packages
 must_fail('git clone deb::grub'.split())
 subprocess.check_call('git clone deb::grub?skip=0.97-16.1~bpo.1 grub.skip'.split())
-assert set(os.listdir()) == {'gzrt', 'gzrt.extratrust', 'grub.skip', 'zeromq'}, os.listdir()
+assert set(os.listdir()) == {'gzrt', 'gzrt.extratrust', 'grub.skip'}, os.listdir()
 
 shutil.rmtree(tdir)
 
