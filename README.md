@@ -10,7 +10,7 @@ Python 3.3, Pip, GPG, Git, Dpkg (specifically the dpkg-dev subpackage)
 
 ## Installation
 
-    pip3 install --user -r https://raw.github.com/g2p/git-deb/master/requirements.txt
+    pip3 install --user git-deb
     #pip3 install --user -e.  # If you prefer running straight from git
     cp -fst ~/bin ~/.local/bin/git-{remote-,}deb  # Not needed if ~/.local/bin is in the PATH
 
