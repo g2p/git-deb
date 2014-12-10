@@ -323,7 +323,7 @@ class Snapshots:
                 raise MissingSource(ver)
             raise
 
-        dsc_finfos = set()
+        dsc_finfos = []
         dsc_finfos_by_hash = {}
         for fhash, finfos in vars(srcinfo.fileinfo).items():
             assert finfos
@@ -335,7 +335,7 @@ class Snapshots:
             assert '/' not in fhash
             self._get_file(fhash, finfos)
             if finfos[0].name.endswith('.dsc'):
-                dsc_finfos.update(finfos)
+                dsc_finfos.extend(finfos)
                 dsc_finfos_by_hash[fhash] = finfos
             for finfo in finfos:
                 set_excl(self.hash_of_path, path_key(finfo), fhash)
