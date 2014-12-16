@@ -213,8 +213,12 @@ class Snapshots:
         else:
             if cache_control.load_condition(cf):
                 #debug('cache hit ' + cache_control.path)
-                return json.loads(cf.read(),
-                    object_hook=lambda args: types.SimpleNamespace(**args))
+                try:
+                    return json.loads(cf.read(),
+                        object_hook=lambda args: types.SimpleNamespace(**args))
+                except ValueError:
+                    # Invalid json, cache corruption, ext4 delalloc
+                    pass
             cf.close()
         resp = self.http.get(SNAPSHOTS_BASE + url, **kwargs)
         if resp.status_code >= 400:
