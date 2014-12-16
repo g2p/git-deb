@@ -1,4 +1,4 @@
-#!/usr/bin/python3.3
+#!/usr/bin/python3
 """
 Runs in a clean environment; no cache or keyrings.
 
