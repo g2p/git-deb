@@ -702,13 +702,20 @@ def cmd_import(args):
         print('from ' + mark_ref)
         assert ver not in resolved, ver
         resolved[ver] = mark_ref
+        uploadtags = set()
         for dsc_finfo in pkg.dsc_finfos:
+            uploadtag = dsc_finfo.archive_name + '/' + quote_ver(ver)
+            if uploadtag in uploadtags:
+                # debian-archive often has one file at various paths,
+                # tagging once is enough
+                continue
+            uploadtags.add(uploadtag)
             sig_info = dsc_finfo.sig_info
             msg = 'Upload {}'.format(ver)
             if (sig_info.kr_name, sig_info.sigtype) != ('debian', 'GOODSIG'):
                 msg += ' ({kr_name}/{kid} {sigtype})'.format(
                     **vars(sig_info))
-            print('tag {}/{}'.format(dsc_finfo.archive_name, quote_ver(ver)))
+            print('tag ' + uploadtag)
             print('from ' + mark_ref)
             print('tagger {} {} +0000'.format(sig_info.uid, gpg_ts(sig_info.sig_ts)))
             msg += '\n\n'
