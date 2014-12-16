@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-def ignore(*args):
+def ignore(*args, **kwargs):
     pass
 
 def printerr(*args, **kwargs):
